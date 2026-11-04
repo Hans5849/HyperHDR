@@ -4,6 +4,7 @@
 	#include <vector>
 #endif
 
+#include <grabber/linux/v4l2/V4L2Capture.h>
 #include <utils/PixelFormat.h>
 #include <base/Grabber.h>
 #include <grabber/GrabberWorker.h>
@@ -12,6 +13,7 @@
 #include <turbojpeg.h>
 
 class QSocketNotifier;
+class QTimer;
 
 class V4L2Grabber final : public Grabber
 {
@@ -68,7 +70,8 @@ private:
 
 	void start_capturing();
 
-	void stop_capturing();
+	void restartCapture(const QString& reason);
+	void returnBuffer(unsigned int workerIndex, quint64 sourceCount);
 
 	bool process_image(v4l2_buffer* buf, const void* frameImageBuffer, int size);
 
@@ -90,14 +93,16 @@ private:
 
 	bool setControl(__u32 controlId, __s32 newValue);
 
-	struct buffer
-	{
-		void*	start;
-		size_t	length;
-	};
-
-	int                 _fileDescriptor;
-	std::vector<buffer> _buffers;
+	int _fileDescriptor;
+	V4L2Capture::Operations _operations;
+	V4L2Capture::Buffers _buffers;
+	v4l2_buf_type _captureType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	QTimer* _watchdog;
+	QTimer* _retryTimer;
+	QSocketNotifier* _eventNotifier = nullptr;
+	qint64 _lastFrame = 0;
+	quint64 _generationFrame = 0;
+	quint64 _streamEpoch = 0;
 	QSocketNotifier*	_streamNotifier;	
 	GrabberManager      _V4L2WorkerManager;
 };

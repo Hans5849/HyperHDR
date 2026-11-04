@@ -28,6 +28,7 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QSocketNotifier>
+#include <QTimer>
 #include <QByteArray>
 
 #include <cassert>
@@ -82,6 +83,7 @@ static const V4L2Grabber::HyperHdrFormat supportedFormats[] =
 	{ V4L2_PIX_FMT_UYVY,   PixelFormat::UYVY },
 	{ V4L2_PIX_FMT_XRGB32, PixelFormat::XRGB },
 	{ V4L2_PIX_FMT_RGB24,  PixelFormat::RGB24 },
+	{ V4L2_PIX_FMT_BGR24,  PixelFormat::BGR24 },
 	{ V4L2_PIX_FMT_YUV420, PixelFormat::I420 },
 	{ V4L2_PIX_FMT_NV12,   PixelFormat::NV12 },
 	{ V4L2_PIX_FMT_MJPEG,  PixelFormat::MJPEG },
@@ -92,10 +94,20 @@ static const V4L2Grabber::HyperHdrFormat supportedFormats[] =
 V4L2Grabber::V4L2Grabber(const QString& device, const QString& configurationPath)
 	: Grabber(configurationPath, "V4L2:" + device.left(14))
 	, _fileDescriptor(-1)
-	, _buffers()
+	, _buffers(_operations)
+	, _watchdog(new QTimer(this))
+	, _retryTimer(new QTimer(this))
 	, _streamNotifier(nullptr)
 
 {
+	_retryTimer->setSingleShot(true);
+	_retryTimer->setInterval(3000);
+	connect(_retryTimer, &QTimer::timeout, this, [this]() { start(); });
+	_watchdog->setInterval(1000);
+	connect(_watchdog, &QTimer::timeout, this, [this]() {
+		if (_initialized && InternalClock::now() - _lastFrame > 5000)
+			restartCapture("streaming: no frames for five seconds (signal lost or capture stalled)");
+	});
 	// Refresh devices
 	getV4L2devices();
 
@@ -168,12 +180,7 @@ V4L2Grabber::~V4L2Grabber()
 
 void V4L2Grabber::uninit()
 {
-	// stop if the grabber was not stopped
-	if (_initialized)
-	{
-		Debug(_log, "Uninit grabber: {:s}", (_deviceName));
-		stop();
-	}
+	stop();
 }
 
 bool V4L2Grabber::init()
@@ -304,6 +311,11 @@ bool V4L2Grabber::init()
 				{
 					_initialized = true;
 				}
+				else
+				{
+					uninit_device();
+					close_device();
+				}
 			}
 			catch (std::exception& e)
 			{
@@ -397,8 +409,11 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				continue;
 			}
 
-			if (cap.device_caps & V4L2_CAP_META_CAPTURE)
+			v4l2_buf_type captureType;
+			try { captureType = V4L2Capture::captureType(cap); }
+			catch (const std::exception& e)
 			{
+				Debug(_log, "Discovery skipping {:s}: {:s}", devName, e.what());
 				close(fd);
 				continue;
 			}
@@ -407,9 +422,10 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 			struct v4l2_format fmt;
 			CLEAR(fmt);
 
-			fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+			fmt.type = captureType;
 			if (xioctl(fd, VIDIOC_G_FMT, &fmt) < 0)
 			{
+				Warning(_log, "Discovery: VIDIOC_G_FMT failed for {:s}: {:s}", devName, strerror(errno));
 				close(fd);
 				continue;
 			}
@@ -445,7 +461,7 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 			}
 
 			// collect available device inputs (index & name)
-			int inputIndex;
+			int inputIndex = -1;
 			if (xioctl(fd, VIDIOC_G_INPUT, &inputIndex) == 0)
 			{
 				struct v4l2_input input;
@@ -460,7 +476,7 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 					CLEAR(formatDesc);
 
 					formatDesc.index = 0;
-					formatDesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+					formatDesc.type = captureType;
 
 					while (xioctl(fd, VIDIOC_ENUM_FMT, &formatDesc) == 0)
 					{
@@ -500,7 +516,7 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 												break;
 											case V4L2_FRMSIZE_TYPE_CONTINUOUS:
 											case V4L2_FRMSIZE_TYPE_STEPWISE:
-												if (searchFrameEnum.stepwise.min.denominator != 0)
+												if (searchFrameEnum.stepwise.min.numerator != 0)
 												{
 													frameRate = searchFrameEnum.stepwise.min.denominator / searchFrameEnum.stepwise.min.numerator;
 												}
@@ -527,7 +543,8 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 
 											if (di.pf == PixelFormat::NO_CHANGE)
 												Debug(_log, "{:s} {:d} x {:d} @ {:d} fps {:s} (unsupported)", (properties.name), di.x, di.y, di.fps, (pixelFormat));
-											else
+											else if (captureType != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ||
+												V4L2Capture::tryFormat(_operations, fd, captureType, di.x, di.y, di.v4l2PixelFormat))
 												properties.valid.append(di);
 										}
 										searchFrameEnum.index++;
@@ -541,6 +558,28 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 					}
 
 					input.index++;
+				}
+			}
+
+			// Native receivers may expose neither discrete frame sizes nor input
+			// enumeration. Probe advertised formats at their current timing.
+			if (captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && properties.valid.empty())
+			{
+				const auto active = V4L2Capture::format(fmt);
+				v4l2_fmtdesc candidate{}; candidate.type = captureType;
+				while (xioctl(fd, VIDIOC_ENUM_FMT, &candidate) == 0)
+				{
+					const auto pf = identifyFormat(candidate.pixelformat);
+					if (pf != PixelFormat::NO_CHANGE && V4L2Capture::tryFormat(_operations, fd,
+						captureType, active.width, active.height, candidate.pixelformat))
+					{
+						DevicePropertiesItem di;
+						di.x = active.width; di.y = active.height; di.fps = 0;
+						di.pf = pf; di.v4l2PixelFormat = candidate.pixelformat; di.input = inputIndex;
+						if (pf == PixelFormat::BGR24) properties.valid.prepend(di);
+						else properties.valid.append(di);
+					}
+					++candidate.index;
 				}
 			}
 
@@ -578,14 +617,14 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				}
 			}
 
-			if (properties.valid.empty() && devName == "/dev/video0")
+			if (properties.valid.empty())
 			{
 				DevicePropertiesItem di;
-				di.x = fmt.fmt.pix.width;
-				di.y = fmt.fmt.pix.height;
+				di.x = V4L2Capture::format(fmt).width;
+				di.y = V4L2Capture::format(fmt).height;
 				di.fps = 0;
-				di.pf = identifyFormat(fmt.fmt.pix.pixelformat);
-				di.v4l2PixelFormat = fmt.fmt.pix.pixelformat;
+				di.pf = identifyFormat(V4L2Capture::format(fmt).fourcc);
+				di.v4l2PixelFormat = V4L2Capture::format(fmt).fourcc;
 				di.input = inputIndex;
 
 				QString pixelFormat = pixelFormatToString(di.pf);
@@ -593,7 +632,7 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				{
 					Debug(_log, "{:s} {:d} x {:d} @ {:d} fps {:s} (unsupported)", (properties.name), di.x, di.y, di.fps, (pixelFormat));
 				}
-				else
+				else if (captureType != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || V4L2Capture::format(fmt).planes == 1)
 				{
 					Debug(_log, "{:s} {:d} x {:d} @ {:d} fps {:s}, input = {:d} (seems supported, device not fully compatible with v4l2 grabber model, frame rate is unknown)", (properties.name), di.x, di.y, di.fps, (pixelFormat), di.input);
 					properties.valid.append(di);
@@ -616,129 +655,71 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 
 bool V4L2Grabber::start()
 {
+	if (_initialized && _buffers.streaming)
+		return true;
+	_retryTimer->stop();
 	try
 	{
 		resetCounter(InternalClock::now());
+		_generationFrame = _currentFrame;
 		_V4L2WorkerManager.Start();
-
-		if (_V4L2WorkerManager.workersCount <= 1)
-			Info(_log, "Multithreading for V4L2 is disabled. Available thread's count {:d}", _V4L2WorkerManager.workersCount);
-		else
-			Info(_log, "Multithreading for V4L2 is enabled. Available thread's count {:d}", _V4L2WorkerManager.workersCount);
-
-		if (init() && _streamNotifier != nullptr && !_streamNotifier->isEnabled())
+		if (init() && _streamNotifier != nullptr)
 		{
-			_streamNotifier->setEnabled(true);
 			start_capturing();
+			_streamNotifier->setEnabled(true);
+			_lastFrame = InternalClock::now();
+			_watchdog->start();
 			Info(_log, "Started");
 			return true;
 		}
 	}
-	catch (std::exception& e)
+	catch (const std::exception& e)
 	{
 		Error(_log, "Video capture fails to start ({:s})", e.what());
 	}
-
+	stop();
+	_retryTimer->start();
 	return false;
 }
 
 void V4L2Grabber::stop()
 {
-	if (_streamNotifier != nullptr && _streamNotifier->isEnabled())
-	{
-		_V4L2WorkerManager.Stop();
+	++_streamEpoch;
+	_retryTimer->stop();
+	_watchdog->stop();
+	if (_streamNotifier) _streamNotifier->setEnabled(false);
+	if (_eventNotifier) _eventNotifier->setEnabled(false);
+	// Workers own pointers into MMAP; join them before releasing any mappings.
+	_V4L2WorkerManager.Stop();
+	for (auto& worker : _V4L2WorkerManager.workers) worker->noBusy();
+	uninit_device();
+	close_device();
+	_initialized = false;
+}
 
-		stop_capturing();
-		_streamNotifier->setEnabled(false);
-		uninit_device();
-		close_device();
-		_initialized = false;
-		Info(_log, "Stopped");
-	}
+void V4L2Grabber::restartCapture(const QString& reason)
+{
+	Warning(_log, "{:s}; retrying capture in three seconds", reason);
+	stop();
+	_retryTimer->start();
 }
 
 void V4L2Grabber::close_device()
 {
-	if (close(_fileDescriptor) == -1)
-	{
-		throw_errno_exception("Closing video device failed");
-		return;
-	}
-
-	_fileDescriptor = -1;
-
 	delete _streamNotifier;
 	_streamNotifier = nullptr;
+	delete _eventNotifier;
+	_eventNotifier = nullptr;
+	if (_fileDescriptor >= 0 && close(_fileDescriptor) < 0)
+		throw_errno_exception("Closing video device failed");
+	_fileDescriptor = -1;
 }
 
 bool V4L2Grabber::init_mmap()
 {
-	struct v4l2_requestbuffers req;
-
-	CLEAR(req);
-
-	req.count = 4;
-	req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	req.memory = V4L2_MEMORY_MMAP;
-
-	if (xioctl(VIDIOC_REQBUFS, &req) == -1)
-	{
-		if (EINVAL == errno)
-		{
-			throw_exception("'" + _deviceName + "' does not support memory mapping");
-			return false;
-		}
-		else
-		{
-			throw_errno_exception("VIDIOC_REQBUFS");
-			return false;
-		}
-	}
-
-	if (req.count < 2)
-	{
-		throw_exception("Insufficient buffer memory on " + _deviceName);
-		return false;
-	}
-
-	_buffers.resize(req.count);
-
-	for (size_t n_buffers = 0; n_buffers < req.count; ++n_buffers)
-	{
-		struct v4l2_buffer buf;
-
-		CLEAR(buf);
-
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory = V4L2_MEMORY_MMAP;
-		buf.index = n_buffers;
-
-		if (xioctl(VIDIOC_QUERYBUF, &buf) == -1)
-		{
-			throw_errno_exception("VIDIOC_QUERYBUF");
-			return false;
-		}
-
-		_buffers[n_buffers].length = buf.length;
-		_buffers[n_buffers].start = mmap(
-			nullptr,
-			buf.length,
-			PROT_READ | PROT_WRITE,
-			MAP_SHARED,
-			_fileDescriptor,
-			buf.m.offset
-		);
-
-		if (MAP_FAILED == _buffers[n_buffers].start)
-		{
-			throw_errno_exception("mmap");
-			return false;
-		}
-	}
-
+	_buffers.allocate(_fileDescriptor, _captureType, 1);
 	return true;
 }
-
 
 bool V4L2Grabber::getControl(int _fd, __u32 controlId, long& minVal, long& maxVal, long& defVal)
 {
@@ -838,30 +819,41 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 		}
 	}
 
-	if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE))
+	_captureType = V4L2Capture::captureType(cap);
+	Info(_log, "Capture API: {:s}", _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? "multiplanar" : "single-planar");
+
+	// HDMI receivers may require detected timings to be applied before S_FMT.
+	v4l2_dv_timings detected{}, current{};
+	if (xioctl(VIDIOC_QUERY_DV_TIMINGS, &detected) == 0 &&
+		xioctl(VIDIOC_G_DV_TIMINGS, &current) == 0 &&
+		std::memcmp(&detected, &current, sizeof(current)) != 0)
+		V4L2Capture::check(xioctl(VIDIOC_S_DV_TIMINGS, &detected), "format negotiation: VIDIOC_S_DV_TIMINGS");
+
+	v4l2_event_subscription subscription{};
+	subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+	if (xioctl(VIDIOC_SUBSCRIBE_EVENT, &subscription) == 0)
 	{
-		throw_exception("'" + actDevice.name + "' is no video capture device");
-		return false;
+		_eventNotifier = new QSocketNotifier(_fileDescriptor, QSocketNotifier::Exception, this);
+		connect(_eventNotifier, &QSocketNotifier::activated, this, [this]() {
+			v4l2_event event{};
+			bool changed = false;
+			while (xioctl(VIDIOC_DQEVENT, &event) == 0)
+				changed |= event.type == V4L2_EVENT_SOURCE_CHANGE;
+			restartCapture(changed ? "streaming: HDMI/video source changed" :
+				"streaming: source event notification without a readable event");
+		});
 	}
-
-
-	if (!(cap.capabilities & V4L2_CAP_STREAMING))
-	{
-		throw_exception("'" + actDevice.name + "' does not support streaming i/o");
-		return false;
-	}
-
 
 	/* Select video input, video standard and tune here. */
 	struct v4l2_cropcap cropcap;
 	CLEAR(cropcap);
 
-	cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	cropcap.type = _captureType;
 
 	if (xioctl(VIDIOC_CROPCAP, &cropcap) == 0)
 	{
 		struct v4l2_crop crop;
-		crop.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		crop.type = _captureType;
 		crop.c = cropcap.defrect;
 
 		if (xioctl(VIDIOC_S_CROP, &crop) == -1)
@@ -889,45 +881,31 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			Info(_log, "Set device input to: {:s}", reinterpret_cast<const char*>(v4l2Input.name));
 	}
 
-	// get the current settings
-	struct v4l2_format fmt;
-	CLEAR(fmt);
-
-	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	if (-1 == xioctl(VIDIOC_G_FMT, &fmt))
+	v4l2_format fmt{};
+	fmt.type = _captureType;
+	V4L2Capture::check(xioctl(VIDIOC_G_FMT, &fmt), "format negotiation: VIDIOC_G_FMT");
+	// Current timings can change since enumeration. Native receivers often accept
+	// only their active dimensions; use those when frame intervals are unknown.
+	const auto currentFormat = V4L2Capture::format(fmt);
+	if (_captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && props.fps == 0)
 	{
-		throw_errno_exception("VIDIOC_G_FMT");
-		return false;
+		props.x = currentFormat.width;
+		props.y = currentFormat.height;
 	}
-
-	// set the requested pixel format
-	fmt.fmt.pix.pixelformat = props.v4l2PixelFormat;
-
-	if (props.pf == PixelFormat::MJPEG)
-		fmt.fmt.pix.field = V4L2_FIELD_ANY;
-
-
-	// set custom resolution for width and height	
-	fmt.fmt.pix.width = props.x;
-	fmt.fmt.pix.height = props.y;
-
-
-	// set the settings
-	if (-1 == xioctl(VIDIOC_S_FMT, &fmt))
-	{
-		throw_errno_exception("VIDIOC_S_FMT");
-		return false;
-	}
-
-
-	// display the used width and height
-	Info(_log, "Set resolution to: {:d} x {:d}", props.x, props.y);
+	V4L2Capture::requestFormat(fmt, props.x, props.y, props.v4l2PixelFormat);
+	const auto negotiated = V4L2Capture::negotiate(_operations, _fileDescriptor, fmt);
+	props.x = negotiated.width;
+	props.y = negotiated.height;
+	if (identifyFormat(negotiated.fourcc) == PixelFormat::NO_CHANGE)
+		throw std::runtime_error("format negotiation: driver returned unsupported pixel format");
+	Info(_log, "Set resolution to: {:d} x {:d}, stride {:d}, planes {:d}, quantization {:d}",
+		props.x, props.y, negotiated.stride, negotiated.planes, negotiated.quantization);
 
 	// Trying to set frame rate
 	struct v4l2_streamparm streamparms;
 	CLEAR(streamparms);
 
-	streamparms.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	streamparms.type = _captureType;
 	// Check that the driver knows about framerate get/set
 	if (props.fps > 0 && xioctl(VIDIOC_G_PARM, &streamparms) >= 0)
 	{
@@ -952,7 +930,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	}
 
 	// set the line length
-	_lineLength = fmt.fmt.pix.bytesperline;
+	_lineLength = negotiated.stride;
 
 	if (actDevice.brightness.enabled)
 	{
@@ -995,7 +973,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	}
 
 	// check pixel format and frame size
-	switch (fmt.fmt.pix.pixelformat)
+	switch (negotiated.fourcc)
 	{
 		case V4L2_PIX_FMT_YUYV:
 		{
@@ -1021,6 +999,16 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			_actualVideoFormat = PixelFormat::XRGB;
 			_frameByteSize = props.x * props.y * 4;
 			Info(_log, "Video pixel format is set to: XRGB");
+		}
+		break;
+
+		case V4L2_PIX_FMT_BGR24:
+		{
+			loadLutFile(PixelFormat::RGB24);
+			_actualVideoFormat = negotiated.quantization == V4L2_QUANTIZATION_LIM_RANGE ? PixelFormat::BGR24_LIMITED : PixelFormat::BGR24;
+			_frameByteSize = uint64_t(_lineLength) * (props.y - 1) + uint64_t(props.x) * 3;
+			Info(_log, "Video pixel format is set to: BGR24 ({:s} range)",
+				negotiated.quantization == V4L2_QUANTIZATION_LIM_RANGE ? "limited" : "full/default");
 		}
 		break;
 
@@ -1087,99 +1075,57 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 
 void V4L2Grabber::uninit_device()
 {
-	for (size_t i = 0; i < _buffers.size(); i++)
-		if (-1 == munmap(_buffers[i].start, _buffers[i].length))
-		{
-			throw_errno_exception("Error while releasing device: munmap");
-			return;
-		}
-
-	_buffers.resize(0);
+	if (!_buffers.clear())
+		Warning(_log, "Buffer cleanup: STREAMOFF, munmap or REQBUFS(0) failed; closing device");
 }
 
 void V4L2Grabber::start_capturing()
 {
-	v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-
-	for (size_t i = 0; i < _buffers.size(); ++i)
-	{
-		struct v4l2_buffer buf;
-
-		CLEAR(buf);
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory = V4L2_MEMORY_MMAP;
-		buf.index = i;
-
-		if (-1 == xioctl(VIDIOC_QBUF, &buf))
-		{
-			throw_errno_exception("VIDIOC_QBUF failed");
-			return;
-		}
-	}
-
-	if (-1 == xioctl(VIDIOC_STREAMON, &type))
-	{
-		throw_errno_exception("VIDIOC_STREAMON failed");
-		return;
-	}
-}
-
-void V4L2Grabber::stop_capturing()
-{
-	enum v4l2_buf_type type;
-
-	type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	ErrorIf((xioctl(VIDIOC_STREAMOFF, &type) == -1), _log, "VIDIOC_STREAMOFF  error code  {:d}, {:s}", errno, strerror(errno));
+	_buffers.start();
 }
 
 int V4L2Grabber::read_frame()
 {
-	bool rc = false;
-
 	try
 	{
-		struct v4l2_buffer buf;
-
-		CLEAR(buf);
-
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory = V4L2_MEMORY_MMAP;
-
-		if (-1 == xioctl(VIDIOC_DQBUF, &buf))
+		V4L2Capture::Descriptor d(_captureType, 1);
+		if (!_buffers.dequeue(d))
 		{
-			switch (errno)
-			{
-				case EAGAIN:
-					return 0;
-
-				case EIO:
-				default:
-					{
-						throw_errno_exception("VIDIOC_DQBUF error. Video stream is probably broken. Refreshing list of the devices.");
-						stop();
-						getV4L2devices();
-					}
-					return 0;
-			}
-		}
-
-		assert(buf.index < _buffers.size());
-
-		rc = process_image(&buf, _buffers[buf.index].start, buf.bytesused);
-
-		if (!rc && -1 == xioctl(VIDIOC_QBUF, &buf))
-		{
-			throw_errno_exception("VIDIOC_QBUF error. Video stream is probably broken.");
+			// Some disconnected drivers report readability with no buffer. Bound
+			// those wakeups while the watchdog waits for signal recovery.
+			_streamNotifier->setEnabled(false);
+			const auto epoch = _streamEpoch;
+			QTimer::singleShot(50, this, [this, epoch]() {
+				if (_initialized && _streamEpoch == epoch && _streamNotifier)
+					_streamNotifier->setEnabled(true);
+			});
 			return 0;
 		}
+		const auto index = d.buffer.index;
+		if (d.buffer.flags & V4L2_BUF_FLAG_ERROR)
+		{
+			++frameStat.badFrame;
+			_buffers.queue(index);
+			return 0;
+		}
+		const auto& mapping = _buffers.mappings[index][0];
+		const auto offset = _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? d.planes[0].data_offset : 0;
+		const auto used = _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? d.planes[0].bytesused : d.buffer.bytesused;
+		if ((_actualVideoFormat == PixelFormat::BGR24 || _actualVideoFormat == PixelFormat::BGR24_LIMITED) &&
+			used - offset < static_cast<unsigned>(_frameByteSize))
+			throw std::runtime_error("streaming: BGR24 payload is shorter than negotiated dimensions/stride");
+		_lastFrame = InternalClock::now();
+		// Worker copies only the buffer identity. No stack plane array escapes.
+		d.buffer.m.planes = nullptr;
+		const bool sent = process_image(&d.buffer, static_cast<const uint8_t*>(mapping.data) + offset, used - offset);
+		if (!sent) _buffers.queue(index);
+		return sent ? 1 : 0;
 	}
-	catch (std::exception& e)
+	catch (const std::exception& e)
 	{
-		emit SignalCapturingException(e.what());
-		rc = false;
+		restartCapture(QString::fromUtf8(e.what()));
 	}
-
-	return rc ? 1 : 0;
+	return 0;
 }
 
 bool V4L2Grabber::process_image(v4l2_buffer* buf, const void* frameImageBuffer, int size)
@@ -1294,45 +1240,34 @@ bool V4L2Grabber::process_image(v4l2_buffer* buf, const void* frameImageBuffer, 
 	return frameSend;
 }
 
-void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString error, quint64 sourceCount)
+void V4L2Grabber::returnBuffer(unsigned int workerIndex, quint64 sourceCount)
 {
-	frameStat.badFrame++;
-	if (error.indexOf(QString(UNSUPPORTED_DECODER)) == 0)
+	if (!_initialized || sourceCount < _generationFrame) return;
+	if (workerIndex >= _V4L2WorkerManager.workers.size())
 	{
-		Error(_log, "Unsupported MJPEG/YUV format. Please contact HyperHDR developers! (info: {:s})", (error));
+		restartCapture("streaming: invalid worker index");
+		return;
 	}
-
-	// get next frame
-	if (!(workerIndex < _V4L2WorkerManager.workersCount && workerIndex < _V4L2WorkerManager.workers.size()))
-		Error(_log, "Frame index = {:d}, index out of range", sourceCount);
-
-	else if (_V4L2WorkerManager.isActive() == false ||
-		xioctl(VIDIOC_QBUF, _V4L2WorkerManager.workers[workerIndex]->GetV4L2Buffer()))
-	{
-		Error(_log, "Frame index = {:d}, inactive or critical VIDIOC_QBUF error in v4l2 driver. Buf index = {:d}, worker = {:d}, is_active = {:d}.",
-			sourceCount, _V4L2WorkerManager.workers[workerIndex]->GetV4L2Buffer()->index, workerIndex, _V4L2WorkerManager.isActive());
-	}
-
-	_V4L2WorkerManager.workers[workerIndex]->noBusy();
+	auto& worker = _V4L2WorkerManager.workers[workerIndex];
+	const auto index = worker->GetV4L2Buffer()->index;
+	worker->noBusy();
+	try { _buffers.queue(index); }
+	catch (const std::exception& e) { restartCapture(QString::fromUtf8(e.what())); }
 }
 
-
-void V4L2Grabber::newWorkerFrameHandler(unsigned int workerIndex, Image<ColorRgb> image, quint64 sourceCount, qint64 _frameBegin)
+void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString error, quint64 sourceCount)
 {
-	handleNewFrame(workerIndex, image, sourceCount, _frameBegin);
+	if (!_initialized || sourceCount < _generationFrame) return;
+	++frameStat.badFrame;
+	Error(_log, "Frame decoding: {:s}", error);
+	returnBuffer(workerIndex, sourceCount);
+}
 
-	// get next frame
-	if (!(workerIndex < _V4L2WorkerManager.workersCount && workerIndex < _V4L2WorkerManager.workers.size()))
-		Error(_log, "Frame index = {:d}, index out of range", sourceCount);
-
-	else if (_V4L2WorkerManager.isActive() == false ||
-		xioctl(VIDIOC_QBUF, _V4L2WorkerManager.workers[workerIndex]->GetV4L2Buffer()))
-	{
-		Error(_log, "Frame index = {:d}, inactive or critical VIDIOC_QBUF error in v4l2 driver. Buf index = {:d}, worker = {:d}, is_active = {:d}.",
-			sourceCount, _V4L2WorkerManager.workers[workerIndex]->GetV4L2Buffer()->index, workerIndex, _V4L2WorkerManager.isActive());
-	}
-
-	_V4L2WorkerManager.workers[workerIndex]->noBusy();
+void V4L2Grabber::newWorkerFrameHandler(unsigned int workerIndex, Image<ColorRgb> image, quint64 sourceCount, qint64 frameBegin)
+{
+	if (!_initialized || sourceCount < _generationFrame) return;
+	handleNewFrame(workerIndex, image, sourceCount, frameBegin);
+	returnBuffer(workerIndex, sourceCount);
 }
 
 int V4L2Grabber::xioctl(int request, void* arg)
