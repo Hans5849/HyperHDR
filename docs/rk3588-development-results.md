@@ -111,7 +111,8 @@ or speedup is included in this implementation.
 
 ## Publication
 
-The available GitHub CLI authentication check reported an invalid token. Local
-commits and a review archive are available independently of GitHub credentials.
-See the accompanying review handoff for the final push result and commit list.
-A future draft PR must target `Hans5849/HyperHDR:master`, never the upstream repo.
+The GitHub CLI authentication check reported an invalid token, but the managed
+Git connection successfully pushed the branch and the connected GitHub tool
+created [draft PR #1](https://github.com/Hans5849/HyperHDR/pull/1), targeting
+`Hans5849/HyperHDR:master`. The PR remains draft and unmerged. No upstream PR was
+opened. A review archive also preserves the patches, documents and local logs.
