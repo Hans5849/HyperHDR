@@ -27,6 +27,7 @@
 
 
 #include <utils/FrameDecoder.h>
+#include <utils/Bgr24.h>
 #include <utils/VectorizedDecoders.h>
 #include <utils/FrameDecoderUtils.h>
 #include <base/AutomaticToneMapping.h>
@@ -48,6 +49,7 @@ void FrameDecoder::processImageVector(
 	// validate format
 	if (pixelFormat != PixelFormat::YUYV && pixelFormat != PixelFormat::UYVY &&
 		pixelFormat != PixelFormat::XRGB && pixelFormat != PixelFormat::RGB24 &&
+		pixelFormat != PixelFormat::BGR24 && pixelFormat != PixelFormat::BGR24_LIMITED &&
 		pixelFormat != PixelFormat::I420 && pixelFormat != PixelFormat::NV12 &&
 		pixelFormat != PixelFormat::P010 && pixelFormat != PixelFormat::MJPEG)
 	{
@@ -220,6 +222,20 @@ void FrameDecoder::processImageVector(
 				lutBuffer, currentDest, endDest);
 		}
 
+		return;
+	}
+
+	// V4L2 BGR3 is top-down. Preserve the legacy RGB24/XRGB orientation below.
+	if (pixelFormat == PixelFormat::BGR24 || pixelFormat == PixelFormat::BGR24_LIMITED)
+	{
+		for (int y = 0; y < outputHeight; ++y)
+		{
+			const auto* source = data + uint64_t(lineLength) * (_cropTop + y * (Quarter ? 2 : 1)) + uint64_t(_cropLeft) * 3;
+			auto* dest = destMemory + uint64_t(destLineSize) * y;
+			for (int x = 0; x < outputWidth; ++x)
+				Bgr24::pixel<UseToneMapping>(source + x * (Quarter ? 6 : 3), dest + x * 3,
+					pixelFormat == PixelFormat::BGR24_LIMITED, lutBuffer);
+		}
 		return;
 	}
 

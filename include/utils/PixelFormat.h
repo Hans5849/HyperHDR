@@ -13,6 +13,8 @@ enum class PixelFormat {
 	NV12,
 	MJPEG,
 	P010,
+	BGR24,
+	BGR24_LIMITED,
 	NO_CHANGE
 };
 
@@ -31,6 +33,10 @@ inline PixelFormat parsePixelFormat(const QString& pixelFormat)
 	else if (format.compare("rgb24") == 0)
 	{
 		return PixelFormat::RGB24;
+	}
+	else if (format.compare("bgr24") == 0)
+	{
+		return PixelFormat::BGR24;
 	}
 	else if (format.compare("xrgb") == 0)
 	{
@@ -70,6 +76,10 @@ inline QString pixelFormatToString(const PixelFormat& pixelFormat)
 	else if (pixelFormat == PixelFormat::RGB24)
 	{
 		return "rgb24";
+	}
+	else if (pixelFormat == PixelFormat::BGR24 || pixelFormat == PixelFormat::BGR24_LIMITED)
+	{
+		return "bgr24";
 	}
 	else if (pixelFormat == PixelFormat::XRGB)
 	{
