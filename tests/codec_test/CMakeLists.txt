@@ -778,3 +778,7 @@ if (WIN32 AND WINDEPLOYQT_EXECUTABLE)
         COMMENT "Running windeployqt for $<CONFIG> build"
     )
 endif()
+
+# Small deterministic decoder regression; no fixtures or capture hardware.
+enable_testing()
+add_test(NAME bgr24-decoder COMMAND DecoderTest --bgr24-check)

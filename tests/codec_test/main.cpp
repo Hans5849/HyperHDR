@@ -21,6 +21,7 @@
 #include <utils/Logger.h>
 #include <utils/PixelFormat.h>
 #include <utils/LutLoader.h>
+#include "Bgr24Checks.h"
 
 namespace FrameDecoder
 {
@@ -155,6 +156,7 @@ QString cpuName();
 
 int main(int argc, char* argv[]) {
 	QCoreApplication app(argc, argv);
+	if (app.arguments().contains("--bgr24-check")) return checkBgr24Decoder();
 	QTextStream out(stdout);
 
 	auto fmtCell = [](const QString& text, int width) {
