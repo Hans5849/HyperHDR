@@ -55,3 +55,25 @@ Use returned negotiated dimensions/stride, check payload bounds, clean partial
 startup, and use bounded timer retries for stream failures and source changes.
 No board names, fixed resolution, acceleration or new YUV dependencies belong
 in the common path. Hardware verification remains a separate requirement.
+
+## Implemented result
+
+The helper now normalizes pix/pix_mp, selects the node's effective capabilities,
+probes MPLANE modes with TRY_FMT (rejecting substituted formats and rejected NV12),
+and owns MMAP planes. Receivers without discrete frame-size/input enumeration
+can advertise usable formats at their current timing; BGR24 is preferred in that
+fallback. Current-format fallback is no longer tied to a numbered node.
+
+Workers retain a mapping until completion, but return buffers using fresh QBUF
+metadata reconstructed from their index. Startup failure and normal stop both
+join workers, STREAMOFF, unmap all planes, release REQBUFS and close the fd.
+Frame generations discard queued completions from a prior stream. Source-change
+notifications, fatal buffer errors and a five-second watchdog cause teardown and
+three-second retry. Explicit stop cancels retries; EAGAIN readiness is throttled.
+
+BGR3 has its own top-down, stride-aware decoder and limited-range variant.
+Range expansion and optional RGB LUT lookup share the output conversion pass.
+Legacy RGB24/XRGB semantics remain unchanged. Separate-memory-plane decoder
+layouts are intentionally unsupported; the mapping owner's generic multi-plane
+rollback is nevertheless covered by tests. Kernel event/timing behavior and
+physical LED output still require the hardware acceptance procedure.
