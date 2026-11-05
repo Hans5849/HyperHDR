@@ -2,8 +2,15 @@
 
 These are operator instructions. No physical Orange Pi, HDMI source, WLED device,
 package installation or reboot was accessed by the development environment.
-The prior 1080p60 BGR3 capture is user-supplied evidence; this branch still needs
-all application-level hardware checks below.
+The prior and mainline 1080p60 BGR3 captures are user-supplied kernel-level
+evidence; this branch still needs all application-level hardware checks below.
+For the current Armbian 26.8.3 / Debian 13 Trixie mainline setup, start with
+[rk3588-mainline-review.md](rk3588-mainline-review.md): `snps_hdmirx`, bus
+`platform:fdee0000.hdmi_receiver`, currently `/dev/video2`, kernel
+`6.18.44-current-rockchip64`. Save its stable driver/bus identity in HyperHDR.
+The Bookworm/vendor setup below records the original development target; it is
+not a requirement for mainline capture. Use the Trixie ARM64 image/target for the
+new verified OS. No kernel change or vendor driver is required.
 
 ## Preserve a rollback path first
 
@@ -15,7 +22,7 @@ from the web UI and back up the service user's entire `~/.hyperhdr` directory
 while HyperHDR is stopped (including its database). Keep WLED configuration and
 an image of the working Armbian installation if available. A development version
 may migrate settings; rollback must restore the pre-development backup too.
-Do not upgrade the known-working vendor kernel as part of this capture test.
+Keep the currently working kernel; do not switch to a vendor kernel for this test.
 
 ## Build and package
 
@@ -134,9 +141,10 @@ v4l2-ctl -d /dev/video0 --get-fmt-video
 v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=600 --stream-to=/dev/null
 ```
 
-Expect rk_hdmirx, VIDEO_CAPTURE_MPLANE and STREAMING, BGR3, 1920x1080, one plane,
+For the original vendor setup expect rk_hdmirx, VIDEO_CAPTURE_MPLANE and STREAMING, BGR3, 1920x1080, one plane,
 bytesperline 5760, sizeimage 6220800 and limited quantization for the verified
-setup. Record actual values. NV24/NV16 are unsupported by this decoder. Advertised
+setup. Record actual values. The mainline run enumerated only BGR3; its quantization was not supplied.
+NV24/NV16 are unsupported by this decoder. Advertised
 NV12 is not proof of successful negotiation; its prior TRY_FMT failed with EINVAL.
 Do not use FFmpeg's standard V4L2 input as the compatibility criterion.
 
