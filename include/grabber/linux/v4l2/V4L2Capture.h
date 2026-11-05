@@ -32,6 +32,23 @@ inline v4l2_buf_type captureType(const v4l2_capability& cap)
 	throw std::runtime_error("discovery: device has no video capture capability");
 }
 
+// A node number is an enumeration result, not receiver identity. Require both
+// fields so unnamed/ambiguous nodes retain their existing discovery names.
+inline std::string deviceIdentity(const v4l2_capability& cap)
+{
+	const auto bounded = [](const auto& field) {
+		const auto* begin = reinterpret_cast<const char*>(field);
+		return std::string(begin, strnlen(begin, sizeof(field)));
+	};
+	const auto driver = bounded(cap.driver), bus = bounded(cap.bus_info);
+	return driver.empty() || bus.empty() ? std::string() : "v4l2:" + driver + "@" + bus;
+}
+
+inline bool isDeviceIdentity(const std::string& name)
+{
+	return name.compare(0, 5, "v4l2:") == 0;
+}
+
 struct Format
 {
 	__u32 width, height, fourcc, stride, size, planes, quantization;
@@ -107,6 +124,33 @@ inline void check(int result, const char* stage)
 		throw std::runtime_error(std::string(stage) + ": " + std::strerror(errno));
 }
 
+// Match signal geometry, not reserved bytes or descriptive timing flags. The
+// driver may canonicalize standards/flags when S_DV_TIMINGS is applied.
+inline bool sameTimings(const v4l2_dv_timings& a, const v4l2_dv_timings& b)
+{
+	if (a.type != V4L2_DV_BT_656_1120 || b.type != a.type) return false;
+	const auto& x = a.bt; const auto& y = b.bt;
+	return x.width == y.width && x.height == y.height && x.interlaced == y.interlaced &&
+		x.polarities == y.polarities && x.pixelclock == y.pixelclock &&
+		x.hfrontporch == y.hfrontporch && x.hsync == y.hsync && x.hbackporch == y.hbackporch &&
+		x.vfrontporch == y.vfrontporch && x.vsync == y.vsync && x.vbackporch == y.vbackporch &&
+		x.il_vfrontporch == y.il_vfrontporch && x.il_vsync == y.il_vsync && x.il_vbackporch == y.il_vbackporch;
+}
+
+inline void refreshTimings(Operations& ops, int fd)
+{
+	v4l2_dv_timings detected{}, current{};
+	if (ops.control(fd, VIDIOC_QUERY_DV_TIMINGS, &detected) < 0)
+	{
+		// Ordinary cameras do not implement DV timings. HDMI ENOLINK/ENOLCK
+		// must instead abort startup before allocating/queueing stale frames.
+		if (errno == ENOTTY || errno == EINVAL) return;
+		check(-1, "signal acquisition: VIDIOC_QUERY_DV_TIMINGS");
+	}
+	if (ops.control(fd, VIDIOC_G_DV_TIMINGS, &current) == 0 && sameTimings(detected, current)) return;
+	check(ops.control(fd, VIDIOC_S_DV_TIMINGS, &detected), "format negotiation: VIDIOC_S_DV_TIMINGS");
+}
+
 inline Format negotiate(Operations& ops, int fd, v4l2_format& fmt)
 {
 	check(ops.control(fd, VIDIOC_S_FMT, &fmt), "format negotiation: VIDIOC_S_FMT");
@@ -164,7 +208,7 @@ public:
 	Buffers(const Buffers&) = delete;
 	Buffers& operator=(const Buffers&) = delete;
 
-	void allocate(int descriptor, v4l2_buf_type bufferType, unsigned planes)
+	void allocate(int descriptor, v4l2_buf_type bufferType, unsigned planes, size_t minimumSize = 0)
 	{
 		clear();
 		fd = descriptor; type = bufferType; planeCount = planes;
@@ -189,7 +233,8 @@ public:
 				{
 					const size_t size = type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? d.planes[p].length : d.buffer.length;
 					const off_t offset = type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? d.planes[p].m.mem_offset : d.buffer.m.offset;
-					if (!size) throw std::runtime_error("buffer setup: empty plane mapping");
+					if (!size || (p == 0 && size < minimumSize))
+						throw std::runtime_error("buffer setup: plane mapping smaller than negotiated sizeimage");
 					void* address = ops.map(fd, size, offset);
 					if (address == MAP_FAILED) check(-1, "buffer setup: mmap");
 					try { mappings[i].push_back({address, size}); }

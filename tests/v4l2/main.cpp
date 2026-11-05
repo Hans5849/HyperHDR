@@ -18,7 +18,7 @@ struct Fake : Operations
 {
 	unsigned long fail = 0;
 	unsigned failMap = 0, maps = 0, unmaps = 0, releases = 0, queues = 0, off = 0;
-	unsigned planeCount = 1, returnedCount = 4, index = 0, used = 24, offset = 0;
+	unsigned planeCount = 1, returnedCount = 4, index = 0, used = 24, offset = 0, mappingSize = 32;
 	int dequeueError = 0;
 	bool errorFlag = false, failUnmap = false, substituteFormat = false;
 	std::set<void*> live;
@@ -48,9 +48,9 @@ struct Fake : Operations
 			if (b.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
 			{
 				REQUIRE(b.m.planes != nullptr && b.length == planeCount);
-				for (unsigned p = 0; p < b.length; ++p) { b.m.planes[p].length = 32; b.m.planes[p].m.mem_offset = (b.index * planeCount + p) * 4096; }
+				for (unsigned p = 0; p < b.length; ++p) { b.m.planes[p].length = mappingSize; b.m.planes[p].m.mem_offset = (b.index * planeCount + p) * 4096; }
 			}
-			else { b.length = 32; b.m.offset = b.index * 4096; }
+			else { b.length = mappingSize; b.m.offset = b.index * 4096; }
 		}
 		if (request == VIDIOC_QBUF)
 		{
@@ -58,7 +58,7 @@ struct Fake : Operations
 			if (b.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
 			{
 				REQUIRE(b.length == planeCount && b.m.planes != nullptr);
-				for (unsigned p = 0; p < b.length; ++p) REQUIRE(b.m.planes[p].length == 32);
+				for (unsigned p = 0; p < b.length; ++p) REQUIRE(b.m.planes[p].length == mappingSize);
 			}
 			++queues;
 		}
@@ -137,6 +137,74 @@ int main()
 		REQUIRE(!tryFormat(f, 3, type, 1920, 1080, V4L2_PIX_FMT_BGR24));
 		f.substituteFormat = false; f.planeCount = 2;
 		REQUIRE(!tryFormat(f, 3, type, 1920, 1080, V4L2_PIX_FMT_BGR24));
+	});
+	test("driver/bus identity survives node renumbering", [] {
+		v4l2_capability cap{};
+		std::strcpy(reinterpret_cast<char*>(cap.driver), "snps_hdmirx");
+		std::strcpy(reinterpret_cast<char*>(cap.bus_info), "platform:fdee0000.hdmi_receiver");
+		const auto id = deviceIdentity(cap);
+		REQUIRE(id == "v4l2:snps_hdmirx@platform:fdee0000.hdmi_receiver");
+		std::strcpy(reinterpret_cast<char*>(cap.card), "stream_hdmirx (video2)");
+		REQUIRE(deviceIdentity(cap) == id);
+		std::strcpy(reinterpret_cast<char*>(cap.card), "stream_hdmirx (video7)");
+		REQUIRE(deviceIdentity(cap) == id && isDeviceIdentity(id));
+		REQUIRE(!isDeviceIdentity("/dev/video2"));
+		cap.bus_info[0] = 0; REQUIRE(deviceIdentity(cap).empty());
+		std::memset(cap.driver, 'x', sizeof(cap.driver));
+		std::memset(cap.bus_info, 'y', sizeof(cap.bus_info));
+		REQUIRE(deviceIdentity(cap).size() == 5 + sizeof(cap.driver) + 1 + sizeof(cap.bus_info));
+	});
+	test("mainline DV acquisition and canonical timing metadata", [] {
+		struct TimingDriver : Operations {
+			v4l2_dv_timings detected{}, current{};
+			unsigned sets = 0;
+			int queryError = 0, setError = 0;
+			TimingDriver() { detected.type = V4L2_DV_BT_656_1120; detected.bt.width = 1920;
+				detected.bt.height = 1080; detected.bt.pixelclock = 148500000; current = detected; }
+			int control(int, unsigned long request, void* arg) override {
+				if (request == VIDIOC_QUERY_DV_TIMINGS) {
+					if (queryError) { errno = queryError; return -1; }
+					*static_cast<v4l2_dv_timings*>(arg) = detected;
+				} else if (request == VIDIOC_G_DV_TIMINGS) *static_cast<v4l2_dv_timings*>(arg) = current;
+				else if (request == VIDIOC_S_DV_TIMINGS) {
+					++sets; if (setError) { errno = setError; return -1; }
+					current = *static_cast<v4l2_dv_timings*>(arg);
+				}
+				return 0;
+			}
+		} f;
+		f.current.bt.flags = V4L2_DV_FL_CAN_REDUCE_FPS;
+		f.current.bt.reserved[0] = 1;
+		refreshTimings(f, 3); REQUIRE(f.sets == 0);
+		f.detected.bt.width = 1280; f.detected.bt.height = 720;
+		refreshTimings(f, 3); REQUIRE(f.sets == 1 && f.current.bt.width == 1280);
+		for (auto error : {ENOLINK, ENOLCK, EAGAIN, ERANGE}) {
+			f.queryError = error; rejects([&] { refreshTimings(f, 3); });
+		}
+		for (auto error : {ENOTTY, EINVAL}) { f.queryError = error; refreshTimings(f, 3); }
+		f.queryError = 0; f.detected.bt.pixelclock = 74250000; f.setError = EBUSY;
+		rejects([&] { refreshTimings(f, 3); });
+		f.setError = 0; refreshTimings(f, 3); REQUIRE(f.current.bt.pixelclock == 74250000);
+	});
+	test("verified 1080p BGR3, padded stride and negotiated map size", [] {
+		v4l2_format fmt{}; fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+		auto& p = fmt.fmt.pix_mp;
+		p.width = 1920; p.height = 1080; p.pixelformat = V4L2_PIX_FMT_BGR24;
+		p.num_planes = 1; p.plane_fmt[0].bytesperline = 5760; p.plane_fmt[0].sizeimage = 6220800;
+		p.quantization = V4L2_QUANTIZATION_DEFAULT;
+		const auto native = format(fmt); validateFormat(native);
+		REQUIRE(native.stride == 5760 && native.size == 6220800 && native.planes == 1);
+		REQUIRE(native.quantization == V4L2_QUANTIZATION_DEFAULT);
+		p.plane_fmt[0].bytesperline = 5824; p.plane_fmt[0].sizeimage = 5824 * 1080;
+		validateFormat(format(fmt)); REQUIRE(format(fmt).stride == 5824);
+		Fake f; Buffers b(f);
+		rejects([&] { b.allocate(3, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, 1, native.size); });
+		REQUIRE(f.live.empty() && f.releases == 1 && f.maps == 0);
+		f.mappingSize = native.size; f.used = native.size;
+		b.allocate(3, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, 1, native.size);
+		b.start(); Descriptor d(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, 1);
+		REQUIRE(b.dequeue(d)); REQUIRE(d.planes[0].bytesused == 6220800);
+		REQUIRE(b.mappings[d.buffer.index][0].size == native.size); REQUIRE(b.clear());
 	});
 	for (auto type : {V4L2_BUF_TYPE_VIDEO_CAPTURE, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE})
 	{
