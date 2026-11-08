@@ -228,13 +228,16 @@ void FrameDecoder::processImageVector(
 	// V4L2 BGR3 is top-down. Preserve the legacy RGB24/XRGB orientation below.
 	if (pixelFormat == PixelFormat::BGR24 || pixelFormat == PixelFormat::BGR24_LIMITED)
 	{
+		constexpr int step = Quarter ? 2 : 1;
+		const bool limited = pixelFormat == PixelFormat::BGR24_LIMITED;
 		for (int y = 0; y < outputHeight; ++y)
 		{
-			const auto* source = data + uint64_t(lineLength) * (_cropTop + y * (Quarter ? 2 : 1)) + uint64_t(_cropLeft) * 3;
+			const auto* source = data + uint64_t(lineLength) * (_cropTop + y * step) + uint64_t(_cropLeft) * 3;
 			auto* dest = destMemory + uint64_t(destLineSize) * y;
-			for (int x = 0; x < outputWidth; ++x)
-				Bgr24::pixel<UseToneMapping>(source + x * (Quarter ? 6 : 3), dest + x * 3,
-					pixelFormat == PixelFormat::BGR24_LIMITED, lutBuffer);
+			if (limited)
+				Bgr24::row<UseToneMapping, true, step>(source, dest, outputWidth, lutBuffer);
+			else
+				Bgr24::row<UseToneMapping, false, step>(source, dest, outputWidth, lutBuffer);
 		}
 		return;
 	}

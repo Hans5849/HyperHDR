@@ -198,5 +198,17 @@ int main()
 		Bgr24::pixel<true>(source, dest, true, lut.data());
 		REQUIRE(dest[0] == 7 && dest[1] == 8 && dest[2] == 9);
 	});
+	test("limited-range table matches reference and row conversion", [] {
+		for (int v = 0; v < 256; ++v)
+			REQUIRE(Bgr24::limitedTable[v] == Bgr24::expandLimited(uint8_t(v)));
+		// Two pixels, quarter step: reads pixels 0 and 2 only, writes six bytes.
+		const uint8_t source[12] = {16, 126, 235, 1, 2, 3, 0, 255, 128, 4, 5, 6};
+		uint8_t dest[6]{};
+		Bgr24::row<false, true, 2>(source, dest, 2, nullptr);
+		REQUIRE(dest[0] == 255 && dest[1] == 128 && dest[2] == 0);
+		REQUIRE(dest[3] == Bgr24::expandLimited(128) && dest[4] == 255 && dest[5] == 0);
+		Bgr24::row<false, false, 1>(source, dest, 2, nullptr);
+		REQUIRE(dest[0] == 235 && dest[1] == 126 && dest[2] == 16 && dest[3] == 3 && dest[4] == 2 && dest[5] == 1);
+	});
 	std::cout << passed << " test groups passed\n";
 }
