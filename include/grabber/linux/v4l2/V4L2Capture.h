@@ -84,6 +84,63 @@ inline void validateFormat(const Format& f)
 	}
 }
 
+// Pure restart/backoff policy, kept free of Qt and syscalls so it is testable.
+// - Retries back off 3 s, 6 s, 12 s ... up to 30 s while the source stays dark.
+// - A source-change event retries quickly and resets the backoff.
+// - Isolated short payloads are dropped; only a run of them forces a restart.
+// - The same failure reason is logged loudly once per outage, then quietly.
+class Recovery
+{
+public:
+	static constexpr int initialDelayMs = 3000;
+	static constexpr int maximumDelayMs = 30000;
+	static constexpr int sourceChangeDelayMs = 500;
+	static constexpr unsigned shortFrameLimit = 3;
+
+	// Delay before the next start attempt after a failure.
+	int nextDelay(bool sourceChanged)
+	{
+		++_failures;
+		if (sourceChanged)
+		{
+			_delay = initialDelayMs;
+			return sourceChangeDelayMs;
+		}
+		const int delay = _delay;
+		_delay = (_delay >= maximumDelayMs / 2) ? maximumDelayMs : _delay * 2;
+		return delay;
+	}
+
+	// True when this reason should be logged as a warning (first occurrence in
+	// the current outage, or a different reason than last time).
+	bool shouldWarn(const std::string& reason)
+	{
+		const bool warn = reason != _lastReason;
+		_lastReason = reason;
+		return warn;
+	}
+
+	// True when a short frame should escalate to a capture restart.
+	bool shortFrame() { return ++_shortFrames >= shortFrameLimit; }
+
+	// A complete frame arrived. Returns the number of failed attempts that
+	// preceded it (0 when capture was already healthy).
+	unsigned frameReceived()
+	{
+		const unsigned failures = _failures;
+		_failures = 0; _shortFrames = 0; _delay = initialDelayMs; _lastReason.clear();
+		return failures;
+	}
+
+	unsigned failures() const { return _failures; }
+
+private:
+	int _delay = initialDelayMs;
+	unsigned _failures = 0;
+	unsigned _shortFrames = 0;
+	std::string _lastReason;
+};
+
 class Operations
 {
 public:
