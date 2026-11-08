@@ -101,8 +101,11 @@ V4L2Grabber::V4L2Grabber(const QString& device, const QString& configurationPath
 
 {
 	_retryTimer->setSingleShot(true);
-	_retryTimer->setInterval(3000);
-	connect(_retryTimer, &QTimer::timeout, this, [this]() { start(); });
+	connect(_retryTimer, &QTimer::timeout, this, [this]() {
+		_retrying = true;
+		start();
+		_retrying = false;
+	});
 	_watchdog->setInterval(1000);
 	connect(_watchdog, &QTimer::timeout, this, [this]() {
 		if (_initialized && InternalClock::now() - _lastFrame > 5000)
@@ -143,7 +146,15 @@ void V4L2Grabber::loadLutFile(PixelFormat color, bool silent)
 	QString fileName2 = QString("%1%2").arg(GetSharedLut()).arg("/lut_lin_tables.3d");
 	QString fileName3 = QString("/usr/share/hyperhdr/lut/lut_lin_tables.3d");
 
+	// Automatic capture recovery keeps the table that is already in memory
+	// (including one set by calibration). User actions always reload.
+	if (_retrying && _lutBufferInit && _loadedLutFormat == color && _loadedLutHdr == _hdrToneMappingEnabled)
+		return;
+
 	Grabber::loadLutFile((!silent) ? _log : nullptr, color, QList<QString>{fileName1, fileName2, fileName3});
+
+	_loadedLutFormat = _lutBufferInit ? color : PixelFormat::NO_CHANGE;
+	_loadedLutHdr = _hdrToneMappingEnabled;
 }
 
 void V4L2Grabber::setHdrToneMappingEnabled(int mode)
@@ -658,6 +669,9 @@ bool V4L2Grabber::start()
 	if (_initialized && _buffers.streaming)
 		return true;
 	_retryTimer->stop();
+	if (!_retrying)
+		_recovery = {};
+	QString failure = "video capture failed to start";
 	try
 	{
 		resetCounter(InternalClock::now());
@@ -675,10 +689,10 @@ bool V4L2Grabber::start()
 	}
 	catch (const std::exception& e)
 	{
-		Error(_log, "Video capture fails to start ({:s})", e.what());
+		failure = QString("video capture failed to start (%1)").arg(QString::fromUtf8(e.what()));
 	}
 	stop();
-	_retryTimer->start();
+	scheduleRetry(failure);
 	return false;
 }
 
@@ -697,19 +711,36 @@ void V4L2Grabber::stop()
 	_initialized = false;
 }
 
-void V4L2Grabber::restartCapture(const QString& reason)
+void V4L2Grabber::restartCapture(const QString& reason, bool sourceChanged)
 {
-	Warning(_log, "{:s}; retrying capture in three seconds", reason);
 	stop();
-	_retryTimer->start();
+	scheduleRetry(reason, sourceChanged);
+}
+
+void V4L2Grabber::scheduleRetry(const QString& reason, bool sourceChanged)
+{
+	const int delay = _recovery.nextDelay(sourceChanged);
+	// Warn once per outage; repeats while the source stays dark go to debug.
+	if (_recovery.shouldWarn(reason.toStdString()))
+		Warning(_log, "{:s}; retrying capture in {:d} ms", reason, delay);
+	else
+		Debug(_log, "{:s}; retry {:d} in {:d} ms", reason, _recovery.failures(), delay);
+	_retryTimer->start(delay);
 }
 
 void V4L2Grabber::close_device()
 {
-	delete _streamNotifier;
-	_streamNotifier = nullptr;
-	delete _eventNotifier;
-	_eventNotifier = nullptr;
+	// close_device() can run inside a notifier's own activated() handler
+	// (read_frame or a source-change event). Never delete the emitter there.
+	for (QSocketNotifier** notifier : { &_streamNotifier, &_eventNotifier })
+	{
+		if (*notifier == nullptr)
+			continue;
+		(*notifier)->setEnabled(false);
+		QObject::disconnect(*notifier, nullptr, nullptr, nullptr);
+		(*notifier)->deleteLater();
+		*notifier = nullptr;
+	}
 	if (_fileDescriptor >= 0 && close(_fileDescriptor) < 0)
 		throw_errno_exception("Closing video device failed");
 	_fileDescriptor = -1;
@@ -798,7 +829,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	}
 
 	// create the notifier for when a new frame is available
-	_streamNotifier = new QSocketNotifier(_fileDescriptor, QSocketNotifier::Read);
+	_streamNotifier = new QSocketNotifier(_fileDescriptor, QSocketNotifier::Read, this);
 	_streamNotifier->setEnabled(false);
 	connect(_streamNotifier, &QSocketNotifier::activated, this, &V4L2Grabber::read_frame);
 
@@ -840,7 +871,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			while (xioctl(VIDIOC_DQEVENT, &event) == 0)
 				changed |= event.type == V4L2_EVENT_SOURCE_CHANGE;
 			restartCapture(changed ? "streaming: HDMI/video source changed" :
-				"streaming: source event notification without a readable event");
+				"streaming: source event notification without a readable event", changed);
 		});
 	}
 
@@ -1113,7 +1144,17 @@ int V4L2Grabber::read_frame()
 		const auto used = _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? d.planes[0].bytesused : d.buffer.bytesused;
 		if ((_actualVideoFormat == PixelFormat::BGR24 || _actualVideoFormat == PixelFormat::BGR24_LIMITED) &&
 			used - offset < static_cast<unsigned>(_frameByteSize))
-			throw std::runtime_error("streaming: BGR24 payload is shorter than negotiated dimensions/stride");
+		{
+			// Drop isolated short frames (common around timing changes); only a
+			// run of them means the negotiated format no longer matches.
+			++frameStat.badFrame;
+			if (_recovery.shortFrame())
+				throw std::runtime_error("streaming: repeated BGR24 payloads shorter than negotiated dimensions/stride");
+			_buffers.queue(index);
+			return 0;
+		}
+		if (const unsigned failures = _recovery.frameReceived())
+			Info(_log, "Capture recovered after {:d} failed attempt(s)", failures);
 		_lastFrame = InternalClock::now();
 		// Worker copies only the buffer identity. No stack plane array escapes.
 		d.buffer.m.planes = nullptr;

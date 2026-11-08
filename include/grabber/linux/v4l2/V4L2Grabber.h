@@ -70,7 +70,8 @@ private:
 
 	void start_capturing();
 
-	void restartCapture(const QString& reason);
+	void restartCapture(const QString& reason, bool sourceChanged = false);
+	void scheduleRetry(const QString& reason, bool sourceChanged = false);
 	void returnBuffer(unsigned int workerIndex, quint64 sourceCount);
 
 	bool process_image(v4l2_buffer* buf, const void* frameImageBuffer, int size);
@@ -103,6 +104,12 @@ private:
 	qint64 _lastFrame = 0;
 	quint64 _generationFrame = 0;
 	quint64 _streamEpoch = 0;
+	V4L2Capture::Recovery _recovery;
+	// Set while the retry timer restarts capture after a failure. Automatic
+	// recovery reuses the LUT already in memory instead of reloading ~50 MB.
+	bool _retrying = false;
+	PixelFormat _loadedLutFormat = PixelFormat::NO_CHANGE;
+	int _loadedLutHdr = -1;
 	QSocketNotifier*	_streamNotifier;	
 	GrabberManager      _V4L2WorkerManager;
 };

@@ -112,6 +112,27 @@ int main()
 		c.device_caps = V4L2_CAP_META_CAPTURE | V4L2_CAP_STREAMING; rejects([&] { captureType(c); });
 		c.device_caps = V4L2_CAP_VIDEO_CAPTURE_MPLANE; rejects([&] { captureType(c); });
 	});
+	test("recovery backoff, source-change fast path and quiet repeats", [] {
+		Recovery r;
+		REQUIRE(r.nextDelay(false) == 3000 && r.nextDelay(false) == 6000);
+		REQUIRE(r.nextDelay(false) == 12000 && r.nextDelay(false) == 24000);
+		REQUIRE(r.nextDelay(false) == 30000 && r.nextDelay(false) == 30000);
+		REQUIRE(r.failures() == 6);
+		// A source change retries quickly and restarts the backoff ladder.
+		REQUIRE(r.nextDelay(true) == Recovery::sourceChangeDelayMs);
+		REQUIRE(r.nextDelay(false) == 3000);
+		REQUIRE(r.shouldWarn("no frames") && !r.shouldWarn("no frames") && !r.shouldWarn("no frames"));
+		REQUIRE(r.shouldWarn("source changed") && r.shouldWarn("no frames"));
+		REQUIRE(r.frameReceived() == 8 && r.failures() == 0 && r.frameReceived() == 0);
+		REQUIRE(r.shouldWarn("no frames"));
+		REQUIRE(r.nextDelay(false) == 3000);
+	});
+	test("isolated short frames are dropped, a run restarts", [] {
+		Recovery r;
+		REQUIRE(!r.shortFrame() && !r.shortFrame());
+		r.frameReceived();
+		REQUIRE(!r.shortFrame() && !r.shortFrame() && r.shortFrame());
+	});
 	test("BGR24 format union, negotiated stride and rejected formats", [] {
 		Fake f; v4l2_format fmt{}; fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
 		requestFormat(fmt, 2, 2, V4L2_PIX_FMT_BGR24);
