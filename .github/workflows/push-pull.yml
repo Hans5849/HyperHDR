@@ -12,6 +12,34 @@ env:
 jobs:
 
 ######################
+## Capture tests #####
+######################
+
+  CaptureTests:
+    name: V4L2 capture and BGR24 decoder tests (ASan/UBSan)
+    runs-on: ubuntu-26.04
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev libturbojpeg0-dev python3
+
+      - name: V4L2 capture tests (no hardware, injected syscalls)
+        run: |
+          cmake -S tests/v4l2 -B build-v4l2 -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-v4l2 -j
+          ctest --test-dir build-v4l2 --output-on-failure
+
+      - name: BGR24 decoder regression (real FrameDecoder dispatch)
+        run: |
+          cmake -S tests/codec_test -B build-codec -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-codec -j --target DecoderTest
+          ctest --test-dir build-codec --output-on-failure
+
+######################
 ###### Linux #########
 ######################
 
