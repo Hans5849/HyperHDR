@@ -84,7 +84,18 @@ if(USE_STANDARD_INSTALLER_NAME AND UNIX AND NOT APPLE)
 		endif()
 		SET ( CPACK_PACKAGE_FILE_NAME "HyperHDR-${HYPERHDR_VERSION_MAJOR}.${HYPERHDR_VERSION_MINOR}.${CPACK_PACKAGE_VERSION_PATCH}-${CMAKE_SYSTEM_PROCESSOR}")
 		message("Package name: ${CPACK_PACKAGE_FILE_NAME}" )
+		set(HYPERHDR_DEBIAN_VERSION_FROM_PATCH ON)
 	endif()	
+endif()
+
+# Keep the prerelease in the .deb Version field. Otherwise the default build is
+# named HyperHDR-24.0.0-beta.0-... but declares "Version: 24.0.0", which equals
+# the final release, so apt neither upgrades to it nor orders betas correctly.
+# (Standard naming above already encodes it in the patch component.)
+if(UNIX AND NOT APPLE AND NOT CPACK_DEBIAN_PACKAGE_VERSION AND NOT HYPERHDR_DEBIAN_VERSION_FROM_PATCH)
+	include(${CMAKE_SOURCE_DIR}/cmake/cmake_modules/DebianVersion.cmake)
+	HyperhdrDebianVersion(CPACK_DEBIAN_PACKAGE_VERSION "${HYPERHDR_VERSION}")
+	message(STATUS "Debian package version: ${CPACK_DEBIAN_PACKAGE_VERSION}")
 endif()
 
 if ( APPLE )
