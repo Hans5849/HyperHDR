@@ -85,7 +85,7 @@ RKNN runtime dependencies. No NPU work is recommended for baseline capture.
 
 ## Research gaps and acceptance experiment
 
-Confirm EXPBUF on rk_hdmirx; RGA imports of its allocations; available DMA heaps;
+Confirm EXPBUF on the receiver (`snps_hdmirx` on mainline); RGA imports of its allocations; available DMA heaps;
 exact driver/SDK compatibility; BGR stride/size support; range expansion and LUT
 order; fence/cache semantics; scale limits; output quality at borders; thermals;
 CPU fallback and timeout cleanup. Compare CPU full/quarter output against RGA at
