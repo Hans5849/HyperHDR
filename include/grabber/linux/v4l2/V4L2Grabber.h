@@ -94,6 +94,8 @@ private:
 
 	bool setControl(__u32 controlId, __s32 newValue);
 
+	QMap<QString, QString> _deviceAliases;
+	size_t _captureImageSize = 0;
 	int _fileDescriptor;
 	V4L2Capture::Operations _operations;
 	V4L2Capture::Buffers _buffers;

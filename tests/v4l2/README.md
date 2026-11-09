@@ -52,3 +52,8 @@ The fixture generator requires Python numpy, pillow and requests. These tests do
 not validate the Qt source-change/watchdog scheduling against an actual driver,
 HDMI timing recovery, real DMA buffers or WLED output. Those remain hardware
 acceptance tests documented in `docs/rk3588-hardware-validation.md`.
+
+The mainline review also tests stable driver/bus identity, canonical DV timings,
+no-link/unlocked acquisition failures, timing updates and set failures, the
+verified 1080p60 BGR3 metadata, padded stride and QUERYBUF sizeimage checks.
+See `docs/rk3588-mainline-review.md` for the physical evidence and remaining tests.

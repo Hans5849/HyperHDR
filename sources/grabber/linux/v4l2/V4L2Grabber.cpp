@@ -206,12 +206,17 @@ bool V4L2Grabber::init()
 		bool    autoDiscovery = (QString::compare(_deviceName, Grabber::AUTO_SETTING, Qt::CaseInsensitive) == 0);
 
 		enumerateV4L2devices(true);
+		if (_deviceAliases.contains(_deviceName))
+			_deviceName = _deviceAliases.value(_deviceName);
+
 
 		if (!autoDiscovery && !_deviceProperties.contains(_deviceName))
 		{
 
 			for (auto it = _deviceProperties.begin(); it != _deviceProperties.end(); ++it)
-				if (it.value().name == _deviceName)
+				if (it.value().name == _deviceName ||
+					(!_deviceName.isEmpty() && !QFileInfo(_deviceName).canonicalFilePath().isEmpty() &&
+					QFileInfo(_deviceName).canonicalFilePath() == QFileInfo(it.value().name).canonicalFilePath()))
 				{
 					foundDevice = it.key();
 					Debug(_log, "Using new name {:s} for {:s}", (foundDevice), (_deviceName));
@@ -220,6 +225,11 @@ bool V4L2Grabber::init()
 
 			if (foundDevice.isNull() || foundDevice.isEmpty())
 			{
+				if (V4L2Capture::isDeviceIdentity(_deviceName.toStdString()))
+				{
+					Warning(_log, "Discovery: selected receiver {:s} is unavailable; waiting for this identity", _deviceName);
+					return false;
+				}
 				Debug(_log, "Device {:s} is not available. Changing to auto.", (_deviceName));
 				autoDiscovery = true;
 			}
@@ -393,7 +403,9 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 {
 
 	QDirIterator it("/sys/class/video4linux/", QDirIterator::NoIteratorFlags);
+	QStringList ambiguousIdentities;
 	_deviceProperties.clear();
+	_deviceAliases.clear();
 	while (it.hasNext())
 	{
 		QString dev = it.next();
@@ -444,7 +456,9 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 			DeviceProperties properties;
 			properties.name = devName;
 
-			Info(_log, "Found capture device: {:s}", (devName));
+			Info(_log, "Found capture device: {:s}, driver {:s}, bus {:s}", devName,
+				QString::fromLatin1(reinterpret_cast<const char*>(cap.driver), strnlen(reinterpret_cast<const char*>(cap.driver), sizeof(cap.driver))),
+				QString::fromLatin1(reinterpret_cast<const char*>(cap.bus_info), strnlen(reinterpret_cast<const char*>(cap.bus_info), sizeof(cap.bus_info))));
 
 			// get device capabilities			
 			if (getControl(fd, V4L2_CID_BRIGHTNESS, properties.brightness.minVal, properties.brightness.maxVal, properties.brightness.defVal))
@@ -650,6 +664,26 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				}
 			}
 
+			const auto identity = QString::fromStdString(V4L2Capture::deviceIdentity(cap));
+			if (captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && !identity.isEmpty())
+			{
+				// Keep the node and old display name as migration aliases. Once
+				// selected, retries follow driver+bus even after videoN changes.
+				if (_deviceProperties.contains(identity))
+				{
+					// Some devices expose several capture nodes on the same bus.
+					// Do not silently merge those nodes into one identity.
+					const auto previousName = _deviceAliases.key(identity);
+					_deviceProperties.insert(previousName, _deviceProperties.take(identity));
+					_deviceAliases.remove(previousName);
+					ambiguousIdentities.append(identity);
+				}
+				else if (!ambiguousIdentities.contains(identity))
+				{
+					_deviceAliases.insert(realName, identity);
+					realName = identity;
+				}
+			}
 			_deviceProperties.insert(realName, properties);
 
 			if (!silent)
@@ -748,7 +782,7 @@ void V4L2Grabber::close_device()
 
 bool V4L2Grabber::init_mmap()
 {
-	_buffers.allocate(_fileDescriptor, _captureType, 1);
+	_buffers.allocate(_fileDescriptor, _captureType, 1, _captureImageSize);
 	return true;
 }
 
@@ -853,12 +887,8 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	_captureType = V4L2Capture::captureType(cap);
 	Info(_log, "Capture API: {:s}", _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? "multiplanar" : "single-planar");
 
-	// HDMI receivers may require detected timings to be applied before S_FMT.
-	v4l2_dv_timings detected{}, current{};
-	if (xioctl(VIDIOC_QUERY_DV_TIMINGS, &detected) == 0 &&
-		xioctl(VIDIOC_G_DV_TIMINGS, &current) == 0 &&
-		std::memcmp(&detected, &current, sizeof(current)) != 0)
-		V4L2Capture::check(xioctl(VIDIOC_S_DV_TIMINGS, &detected), "format negotiation: VIDIOC_S_DV_TIMINGS");
+	// Query/apply timings before S_FMT and before allocating any capture buffers.
+	V4L2Capture::refreshTimings(_operations, _fileDescriptor);
 
 	v4l2_event_subscription subscription{};
 	subscription.type = V4L2_EVENT_SOURCE_CHANGE;
@@ -925,6 +955,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	}
 	V4L2Capture::requestFormat(fmt, props.x, props.y, props.v4l2PixelFormat);
 	const auto negotiated = V4L2Capture::negotiate(_operations, _fileDescriptor, fmt);
+	_captureImageSize = negotiated.size;
 	props.x = negotiated.width;
 	props.y = negotiated.height;
 	if (identifyFormat(negotiated.fourcc) == PixelFormat::NO_CHANGE)
