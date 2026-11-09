@@ -70,8 +70,13 @@ private:
 
 	void start_capturing();
 
-	void restartCapture(const QString& reason, bool sourceChanged = false);
-	void scheduleRetry(const QString& reason, bool sourceChanged = false);
+	void restartCapture(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged = false);
+	void scheduleRetry(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged = false);
+	// No-signal handling for receivers that report their input state.
+	bool pauseIfNoSignal(QString& signalDetail);
+	void waitForSignal(const QString& node, const QString& detail);
+	void checkSignal();
+	void stopSignalWait();
 	void returnBuffer(unsigned int workerIndex, quint64 sourceCount);
 
 	bool process_image(v4l2_buffer* buf, const void* frameImageBuffer, int size);
@@ -100,6 +105,11 @@ private:
 	v4l2_buf_type _captureType = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	QTimer* _watchdog;
 	QTimer* _retryTimer;
+	QTimer* _signalTimer;
+	QSocketNotifier* _signalNotifier = nullptr;
+	int _signalFd = -1;
+	QString _signalNode;
+	QString _activeNode;
 	QSocketNotifier* _eventNotifier = nullptr;
 	qint64 _lastFrame = 0;
 	quint64 _generationFrame = 0;

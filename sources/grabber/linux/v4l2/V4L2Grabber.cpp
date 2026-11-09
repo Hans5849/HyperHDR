@@ -97,6 +97,7 @@ V4L2Grabber::V4L2Grabber(const QString& device, const QString& configurationPath
 	, _buffers(_operations)
 	, _watchdog(new QTimer(this))
 	, _retryTimer(new QTimer(this))
+	, _signalTimer(new QTimer(this))
 	, _streamNotifier(nullptr)
 
 {
@@ -106,10 +107,18 @@ V4L2Grabber::V4L2Grabber(const QString& device, const QString& configurationPath
 		start();
 		_retrying = false;
 	});
+	_signalTimer->setInterval(V4L2Capture::Recovery::signalPollMs);
+	connect(_signalTimer, &QTimer::timeout, this, &V4L2Grabber::checkSignal);
 	_watchdog->setInterval(1000);
 	connect(_watchdog, &QTimer::timeout, this, [this]() {
-		if (_initialized && InternalClock::now() - _lastFrame > 5000)
-			restartCapture("streaming: no frames for five seconds (signal lost or capture stalled)");
+		if (!_initialized || InternalClock::now() - _lastFrame <= 5000)
+			return;
+		QString receiver;
+		if (pauseIfNoSignal(receiver))
+			return;
+		restartCapture(V4L2Capture::Failure::Timeout, receiver.isEmpty() ?
+			QString("no frames for five seconds") :
+			QString("no frames for five seconds (receiver: %1)").arg(receiver));
 	});
 	// Refresh devices
 	getV4L2devices();
@@ -217,6 +226,22 @@ bool V4L2Grabber::init()
 					Debug(_log, "Using new name {:s} for {:s}", (foundDevice), (_deviceName));
 					_deviceName = foundDevice;
 				}
+
+			if (foundDevice.isEmpty())
+			{
+				// /dev/videoN can change across boots: match the stable driver/card
+				// name, but only when exactly one present device carries it.
+				std::vector<std::string> keys;
+				for (auto it = _deviceProperties.begin(); it != _deviceProperties.end(); ++it)
+					keys.push_back(it.key().toStdString());
+				const int match = V4L2Capture::matchSavedDevice(_deviceName.toStdString(), keys);
+				if (match >= 0)
+				{
+					foundDevice = QString::fromStdString(keys[match]);
+					Info(_log, "Device {:s} was renumbered; using {:s}", (_deviceName), (foundDevice));
+					_deviceName = foundDevice;
+				}
+			}
 
 			if (foundDevice.isNull() || foundDevice.isEmpty())
 			{
@@ -328,12 +353,13 @@ bool V4L2Grabber::init()
 					close_device();
 				}
 			}
-			catch (std::exception& e)
+			catch (...)
 			{
-				Error(_log, "V4l2 init failed ({:s}). Closing...", e.what());
-
+				// start() classifies the failure (no signal or initialization)
+				// and logs it once per outage.
 				uninit_device();
 				close_device();
+				throw;
 			}
 		}
 		else
@@ -410,36 +436,20 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				continue;
 			}
 
-			struct v4l2_capability cap;
-			CLEAR(cap);
-
-			if (xioctl(fd, VIDIOC_QUERYCAP, &cap) < 0)
+			// Classify by capabilities, never by node number or driver name.
+			V4L2Capture::Node node;
+			std::string skipReason;
+			if (!V4L2Capture::probeNode(_operations, fd, node, skipReason))
 			{
-				throw_errno_exception("'" + devName + "' is no V4L2 device");
+				if (skipReason.rfind("discovery: VIDIOC_G_FMT", 0) == 0)
+					Warning(_log, "Discovery skipping {:s}: {:s}", devName, skipReason);
+				else
+					Debug(_log, "Discovery skipping {:s}: {:s}", devName, skipReason);
 				close(fd);
 				continue;
 			}
-
-			v4l2_buf_type captureType;
-			try { captureType = V4L2Capture::captureType(cap); }
-			catch (const std::exception& e)
-			{
-				Debug(_log, "Discovery skipping {:s}: {:s}", devName, e.what());
-				close(fd);
-				continue;
-			}
-
-			// get the current settings
-			struct v4l2_format fmt;
-			CLEAR(fmt);
-
-			fmt.type = captureType;
-			if (xioctl(fd, VIDIOC_G_FMT, &fmt) < 0)
-			{
-				Warning(_log, "Discovery: VIDIOC_G_FMT failed for {:s}: {:s}", devName, strerror(errno));
-				close(fd);
-				continue;
-			}
+			const v4l2_buf_type captureType = node.type;
+			const v4l2_format& fmt = node.current;
 
 			DeviceProperties properties;
 			properties.name = devName;
@@ -574,23 +584,16 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 
 			// Native receivers may expose neither discrete frame sizes nor input
 			// enumeration. Probe advertised formats at their current timing.
-			if (captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE && properties.valid.empty())
+			if (properties.valid.empty())
 			{
-				const auto active = V4L2Capture::format(fmt);
-				v4l2_fmtdesc candidate{}; candidate.type = captureType;
-				while (xioctl(fd, VIDIOC_ENUM_FMT, &candidate) == 0)
+				const auto modes = V4L2Capture::currentTimingModes(_operations, fd, node,
+					[this](__u32 fourcc) { return identifyFormat(fourcc) != PixelFormat::NO_CHANGE; });
+				for (const auto& mode : modes)
 				{
-					const auto pf = identifyFormat(candidate.pixelformat);
-					if (pf != PixelFormat::NO_CHANGE && V4L2Capture::tryFormat(_operations, fd,
-						captureType, active.width, active.height, candidate.pixelformat))
-					{
-						DevicePropertiesItem di;
-						di.x = active.width; di.y = active.height; di.fps = 0;
-						di.pf = pf; di.v4l2PixelFormat = candidate.pixelformat; di.input = inputIndex;
-						if (pf == PixelFormat::BGR24) properties.valid.prepend(di);
-						else properties.valid.append(di);
-					}
-					++candidate.index;
+					DevicePropertiesItem di;
+					di.x = mode.width; di.y = mode.height; di.fps = 0;
+					di.pf = identifyFormat(mode.fourcc); di.v4l2PixelFormat = mode.fourcc; di.input = inputIndex;
+					properties.valid.append(di);
 				}
 			}
 
@@ -643,7 +646,7 @@ void V4L2Grabber::enumerateV4L2devices(bool silent)
 				{
 					Debug(_log, "{:s} {:d} x {:d} @ {:d} fps {:s} (unsupported)", (properties.name), di.x, di.y, di.fps, (pixelFormat));
 				}
-				else if (captureType != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || V4L2Capture::format(fmt).planes == 1)
+				else if (V4L2Capture::currentFormatUsable(node))
 				{
 					Debug(_log, "{:s} {:d} x {:d} @ {:d} fps {:s}, input = {:d} (seems supported, device not fully compatible with v4l2 grabber model, frame rate is unknown)", (properties.name), di.x, di.y, di.fps, (pixelFormat), di.input);
 					properties.valid.append(di);
@@ -669,9 +672,11 @@ bool V4L2Grabber::start()
 	if (_initialized && _buffers.streaming)
 		return true;
 	_retryTimer->stop();
+	stopSignalWait();
 	if (!_retrying)
 		_recovery = {};
-	QString failure = "video capture failed to start";
+	auto failure = V4L2Capture::Failure::Initialization;
+	QString detail = "no usable capture device or mode";
 	try
 	{
 		resetCounter(InternalClock::now());
@@ -679,6 +684,7 @@ bool V4L2Grabber::start()
 		_V4L2WorkerManager.Start();
 		if (init() && _streamNotifier != nullptr)
 		{
+			failure = V4L2Capture::Failure::Streaming;
 			start_capturing();
 			_streamNotifier->setEnabled(true);
 			_lastFrame = InternalClock::now();
@@ -687,12 +693,21 @@ bool V4L2Grabber::start()
 			return true;
 		}
 	}
+	catch (const V4L2Capture::NoSignal& e)
+	{
+		// The receiver reports no input: release everything and wait cheaply
+		// instead of streaming into the five-second timeout.
+		const QString node = _activeNode;
+		stop();
+		waitForSignal(node, QString::fromUtf8(e.what()));
+		return false;
+	}
 	catch (const std::exception& e)
 	{
-		failure = QString("video capture failed to start (%1)").arg(QString::fromUtf8(e.what()));
+		detail = QString::fromUtf8(e.what());
 	}
 	stop();
-	scheduleRetry(failure);
+	scheduleRetry(failure, detail);
 	return false;
 }
 
@@ -700,6 +715,7 @@ void V4L2Grabber::stop()
 {
 	++_streamEpoch;
 	_retryTimer->stop();
+	stopSignalWait();
 	_watchdog->stop();
 	if (_streamNotifier) _streamNotifier->setEnabled(false);
 	if (_eventNotifier) _eventNotifier->setEnabled(false);
@@ -711,21 +727,112 @@ void V4L2Grabber::stop()
 	_initialized = false;
 }
 
-void V4L2Grabber::restartCapture(const QString& reason, bool sourceChanged)
+void V4L2Grabber::restartCapture(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged)
 {
 	stop();
-	scheduleRetry(reason, sourceChanged);
+	scheduleRetry(failure, detail, sourceChanged);
 }
 
-void V4L2Grabber::scheduleRetry(const QString& reason, bool sourceChanged)
+void V4L2Grabber::scheduleRetry(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged)
 {
 	const int delay = _recovery.nextDelay(sourceChanged);
-	// Warn once per outage; repeats while the source stays dark go to debug.
-	if (_recovery.shouldWarn(reason.toStdString()))
-		Warning(_log, "{:s}; retrying capture in {:d} ms", reason, delay);
+	const std::string message = V4L2Capture::describe(failure, detail.toStdString());
+	// Log once per outage; repeats while the source stays dark go to debug.
+	if (!_recovery.shouldWarn(message))
+		Debug(_log, "{:s}; retry {:d} in {:d} ms", message, _recovery.failures(), delay);
+	else if (failure == V4L2Capture::Failure::SourceChange)
+		Info(_log, "{:s}; restarting capture in {:d} ms", message, delay);
 	else
-		Debug(_log, "{:s}; retry {:d} in {:d} ms", reason, _recovery.failures(), delay);
+		Warning(_log, "{:s}; retrying capture in {:d} ms", message, delay);
 	_retryTimer->start(delay);
+}
+
+bool V4L2Grabber::pauseIfNoSignal(QString& signalDetail)
+{
+	signalDetail.clear();
+	if (_fileDescriptor < 0)
+		return false;
+	const auto status = V4L2Capture::probeSignal(_operations, _fileDescriptor);
+	signalDetail = QString::fromStdString(status.detail);
+	if (status.state != V4L2Capture::Signal::Absent)
+		return false;
+	const QString node = _activeNode;
+	stop();
+	waitForSignal(node, signalDetail);
+	return true;
+}
+
+// Capture is stopped and its buffers released. Keep one non-streaming handle
+// to the receiver, re-probe it every signalPollMs and on source-change events.
+void V4L2Grabber::waitForSignal(const QString& node, const QString& detail)
+{
+	const std::string message = V4L2Capture::describe(V4L2Capture::Failure::NoSignal, detail.toStdString());
+	if (_recovery.shouldWarn(message))
+		Info(_log, "{:s} on {:s}; capture paused, checking every {:d} ms", message, node, V4L2Capture::Recovery::signalPollMs);
+	else
+		Debug(_log, "{:s} on {:s}; still waiting", message, node);
+
+	_signalNode = node;
+	if (_signalFd < 0 && !node.isEmpty())
+	{
+		const QByteArray path = node.toUtf8();
+		_signalFd = _operations.open(path.constData());
+		if (_signalFd >= 0)
+		{
+			v4l2_event_subscription subscription{};
+			subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+			if (_operations.control(_signalFd, VIDIOC_SUBSCRIBE_EVENT, &subscription) == 0)
+			{
+				_signalNotifier = new QSocketNotifier(_signalFd, QSocketNotifier::Exception, this);
+				connect(_signalNotifier, &QSocketNotifier::activated, this, &V4L2Grabber::checkSignal);
+			}
+		}
+	}
+	_signalTimer->start();
+}
+
+void V4L2Grabber::checkSignal()
+{
+	if (_signalNode.isEmpty())
+		return;
+	if (_signalFd >= 0)
+	{
+		v4l2_event event{};
+		while (_operations.control(_signalFd, VIDIOC_DQEVENT, &event) == 0) {}
+		const auto status = V4L2Capture::probeSignal(_operations, _signalFd);
+		if (status.state == V4L2Capture::Signal::Absent)
+		{
+			waitForSignal(_signalNode, QString::fromStdString(status.detail));
+			return;
+		}
+		Info(_log, "Input signal on {:s}{:s}; starting capture", _signalNode,
+			status.detail.empty() ? std::string() : " (" + status.detail + ")");
+	}
+	else
+		Info(_log, "Cannot reopen {:s} to check its input; rediscovering capture devices", _signalNode);
+
+	// Signal present, state unknown or node gone: full discovery and start.
+	stopSignalWait();
+	_retrying = true;
+	start();
+	_retrying = false;
+}
+
+void V4L2Grabber::stopSignalWait()
+{
+	_signalTimer->stop();
+	if (_signalNotifier != nullptr)
+	{
+		// May run inside the notifier's own activated() handler.
+		_signalNotifier->setEnabled(false);
+		QObject::disconnect(_signalNotifier, nullptr, nullptr, nullptr);
+		_signalNotifier->deleteLater();
+		_signalNotifier = nullptr;
+	}
+	if (_signalFd >= 0)
+		_operations.close(_signalFd);
+	_signalFd = -1;
+	_signalNode.clear();
 }
 
 void V4L2Grabber::close_device()
@@ -827,6 +934,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 		throw_errno_exception("Cannot open '" + actDevice.name + "' device");
 		return false;
 	}
+	_activeNode = actDeviceName;
 
 	// create the notifier for when a new frame is available
 	_streamNotifier = new QSocketNotifier(_fileDescriptor, QSocketNotifier::Read, this);
@@ -853,6 +961,14 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	_captureType = V4L2Capture::captureType(cap);
 	Info(_log, "Capture API: {:s}", _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? "multiplanar" : "single-planar");
 
+	// Receivers that report their input (power_present, DV timings) are not
+	// started without one. Devices that report neither keep the old path.
+	const auto inputSignal = V4L2Capture::probeSignal(_operations, _fileDescriptor);
+	if (inputSignal.state == V4L2Capture::Signal::Absent)
+		throw V4L2Capture::NoSignal(inputSignal.detail);
+	if (!inputSignal.detail.empty())
+		Info(_log, "Input signal: {:s}", inputSignal.detail);
+
 	// HDMI receivers may require detected timings to be applied before S_FMT.
 	v4l2_dv_timings detected{}, current{};
 	if (xioctl(VIDIOC_QUERY_DV_TIMINGS, &detected) == 0 &&
@@ -870,8 +986,13 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			bool changed = false;
 			while (xioctl(VIDIOC_DQEVENT, &event) == 0)
 				changed |= event.type == V4L2_EVENT_SOURCE_CHANGE;
-			restartCapture(changed ? "streaming: HDMI/video source changed" :
-				"streaming: source event notification without a readable event", changed);
+			QString receiver;
+			if (pauseIfNoSignal(receiver))
+				return;
+			if (changed)
+				restartCapture(V4L2Capture::Failure::SourceChange, receiver.isEmpty() ? QString("input timing or format changed") : receiver, true);
+			else
+				restartCapture(V4L2Capture::Failure::Streaming, "source event notification without a readable event");
 		});
 	}
 
@@ -1164,7 +1285,7 @@ int V4L2Grabber::read_frame()
 	}
 	catch (const std::exception& e)
 	{
-		restartCapture(QString::fromUtf8(e.what()));
+		restartCapture(V4L2Capture::Failure::Streaming, QString::fromUtf8(e.what()));
 	}
 	return 0;
 }
@@ -1286,14 +1407,14 @@ void V4L2Grabber::returnBuffer(unsigned int workerIndex, quint64 sourceCount)
 	if (!_initialized || sourceCount < _generationFrame) return;
 	if (workerIndex >= _V4L2WorkerManager.workers.size())
 	{
-		restartCapture("streaming: invalid worker index");
+		restartCapture(V4L2Capture::Failure::Streaming, "invalid worker index");
 		return;
 	}
 	auto& worker = _V4L2WorkerManager.workers[workerIndex];
 	const auto index = worker->GetV4L2Buffer()->index;
 	worker->noBusy();
 	try { _buffers.queue(index); }
-	catch (const std::exception& e) { restartCapture(QString::fromUtf8(e.what())); }
+	catch (const std::exception& e) { restartCapture(V4L2Capture::Failure::Streaming, QString::fromUtf8(e.what())); }
 }
 
 void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString error, quint64 sourceCount)

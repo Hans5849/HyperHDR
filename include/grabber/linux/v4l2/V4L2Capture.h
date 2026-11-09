@@ -3,11 +3,14 @@
 #include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <array>
 #include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,6 +26,9 @@ inline __u32 capabilities(const v4l2_capability& cap)
 inline v4l2_buf_type captureType(const v4l2_capability& cap)
 {
 	const auto caps = capabilities(cap);
+	// Codec, scaler and RGA nodes are memory-to-memory devices, never sources.
+	if (caps & (V4L2_CAP_VIDEO_M2M | V4L2_CAP_VIDEO_M2M_MPLANE))
+		throw std::runtime_error("discovery: memory-to-memory (codec/scaler) node");
 	if (!(caps & V4L2_CAP_STREAMING))
 		throw std::runtime_error("discovery: device does not support streaming");
 	if (caps & V4L2_CAP_VIDEO_CAPTURE)
@@ -96,6 +102,9 @@ public:
 	static constexpr int maximumDelayMs = 30000;
 	static constexpr int sourceChangeDelayMs = 500;
 	static constexpr unsigned shortFrameLimit = 3;
+	// While a receiver reports no input, capture stays stopped (no buffers)
+	// and the open node is re-probed at this fixed, cheap interval.
+	static constexpr int signalPollMs = 2000;
 
 	// Delay before the next start attempt after a failure.
 	int nextDelay(bool sourceChanged)
@@ -156,6 +165,8 @@ public:
 		return ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset);
 	}
 	virtual int unmap(void* address, size_t size) { return ::munmap(address, size); }
+	virtual int open(const char* path) { return ::open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC); }
+	virtual int close(int fd) { return ::close(fd); }
 };
 
 inline void check(int result, const char* stage)
@@ -310,4 +321,175 @@ public:
 		return ok;
 	}
 };
+
+// ---------------------------------------------------------------------------
+// Failure classification for logs.
+enum class Failure { NoSignal, Timeout, Initialization, Streaming, SourceChange };
+
+inline const char* label(Failure failure)
+{
+	switch (failure)
+	{
+		case Failure::NoSignal: return "no signal";
+		case Failure::Timeout: return "timeout";
+		case Failure::Initialization: return "initialization failed";
+		case Failure::Streaming: return "streaming failed";
+		case Failure::SourceChange: return "source changed";
+	}
+	return "capture failed";
+}
+
+// "<category>: <detail>", without repeating a stage prefix such as
+// "streaming: " that already names the category.
+inline std::string describe(Failure failure, std::string detail)
+{
+	if (failure == Failure::Streaming && detail.rfind("streaming: ", 0) == 0)
+		detail.erase(0, 11);
+	return std::string(label(failure)) + ": " + detail;
+}
+
+// Thrown during initialization when the receiver itself reports no input.
+struct NoSignal : std::runtime_error
+{
+	using std::runtime_error::runtime_error;
+};
+
+// ---------------------------------------------------------------------------
+// Input signal state, from generic V4L2 receiver interfaces only.
+//
+// - V4L2_CID_DV_RX_POWER_PRESENT (read-only bitmask): 0 means no source +5V.
+// - VIDIOC_QUERY_DV_TIMINGS: ENOLINK no signal, ENOLCK unstable, ERANGE
+//   out of range.
+// Devices exposing neither (USB/UVC and analog grabbers) report Unknown, and
+// callers keep their previous behaviour for them. No driver names are used.
+enum class Signal { Unknown, Present, Absent };
+
+struct SignalStatus
+{
+	Signal state = Signal::Unknown;
+	std::string detail;
+};
+
+inline SignalStatus probeSignal(Operations& ops, int fd)
+{
+	v4l2_control power{};
+	power.id = V4L2_CID_DV_RX_POWER_PRESENT;
+	const bool hasPower = ops.control(fd, VIDIOC_G_CTRL, &power) == 0;
+	if (hasPower && power.value == 0)
+		return { Signal::Absent, "no source detected (power_present=0)" };
+
+	v4l2_dv_timings timings{};
+	if (ops.control(fd, VIDIOC_QUERY_DV_TIMINGS, &timings) == 0)
+	{
+		if (timings.type == V4L2_DV_BT_656_1120 && timings.bt.width && timings.bt.height)
+			return { Signal::Present, "detected " + std::to_string(timings.bt.width) + "x" + std::to_string(timings.bt.height) +
+				(timings.bt.interlaced ? "i" : "p") };
+		return { Signal::Present, "DV timings detected" };
+	}
+	const std::string power5v = hasPower ? "source detected, " : "";
+	switch (errno)
+	{
+		case ENOLINK: return { Signal::Absent, power5v + "no signal (QUERY_DV_TIMINGS: ENOLINK)" };
+		case ENOLCK: return { Signal::Absent, power5v + "signal not locked (QUERY_DV_TIMINGS: ENOLCK)" };
+		case ERANGE: return { Signal::Absent, power5v + "signal timings out of range (QUERY_DV_TIMINGS: ERANGE)" };
+		default: break;
+	}
+	return { Signal::Unknown, hasPower ? "source detected (power_present set), signal state not reported" : "" };
+}
+
+// ---------------------------------------------------------------------------
+// Discovery helpers. Nothing here depends on /dev/videoN numbering.
+
+struct Node
+{
+	v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	v4l2_format current{};
+};
+
+// Classify an opened node without changing it. Returns false, with a reason,
+// for codec/RGA/metadata/output nodes and for nodes whose format is unreadable.
+inline bool probeNode(Operations& ops, int fd, Node& node, std::string& reason)
+{
+	v4l2_capability cap{};
+	if (ops.control(fd, VIDIOC_QUERYCAP, &cap) < 0)
+	{
+		reason = std::string("discovery: not a V4L2 device: ") + std::strerror(errno);
+		return false;
+	}
+	try { node.type = captureType(cap); }
+	catch (const std::runtime_error& e) { reason = e.what(); return false; }
+	node.current = {};
+	node.current.type = node.type;
+	if (ops.control(fd, VIDIOC_G_FMT, &node.current) < 0)
+	{
+		reason = std::string("discovery: VIDIOC_G_FMT failed: ") + std::strerror(errno);
+		return false;
+	}
+	return true;
+}
+
+struct Mode
+{
+	__u32 width, height, fourcc;
+};
+
+// Native receivers may enumerate neither frame sizes nor inputs. Offer every
+// advertised, decodable FOURCC that TRY_FMT accepts at the current timing,
+// BGR24 first. Works without a signal: the current timing is whatever the
+// driver reports (its default or the last detected one).
+inline std::vector<Mode> currentTimingModes(Operations& ops, int fd, const Node& node,
+	const std::function<bool(__u32)>& decodable)
+{
+	std::vector<Mode> modes;
+	if (node.type != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+		return modes;
+	const auto active = format(node.current);
+	v4l2_fmtdesc candidate{};
+	candidate.type = node.type;
+	while (ops.control(fd, VIDIOC_ENUM_FMT, &candidate) == 0 && candidate.index < 64)
+	{
+		const __u32 fourcc = candidate.pixelformat;
+		if (decodable(fourcc) && tryFormat(ops, fd, node.type, active.width, active.height, fourcc))
+		{
+			const Mode mode{ active.width, active.height, fourcc };
+			if (fourcc == V4L2_PIX_FMT_BGR24) modes.insert(modes.begin(), mode);
+			else modes.push_back(mode);
+		}
+		++candidate.index;
+	}
+	return modes;
+}
+
+// The device's current format can be used as a last-resort mode only when the
+// decoder can read it as one contiguous plane.
+inline bool currentFormatUsable(const Node& node)
+{
+	return node.type != V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE || format(node.current).planes == 1;
+}
+
+// Device keys look like "snps_hdmirx (video1)". The node suffix changes across
+// boots, the driver/card name does not.
+inline std::string stableName(const std::string& key)
+{
+	const auto pos = key.rfind(" (video");
+	return (pos != std::string::npos && !key.empty() && key.back() == ')') ? key.substr(0, pos) : key;
+}
+
+// Index of the device to use for a saved key after renumbering: an exact key
+// match first, otherwise the only device with the same stable name. Returns -1
+// when nothing or more than one device matches (caller falls back to auto).
+inline int matchSavedDevice(const std::string& saved, const std::vector<std::string>& keys)
+{
+	for (size_t i = 0; i < keys.size(); ++i)
+		if (keys[i] == saved) return int(i);
+	const auto wanted = stableName(saved);
+	int found = -1;
+	for (size_t i = 0; i < keys.size(); ++i)
+		if (stableName(keys[i]) == wanted)
+		{
+			if (found >= 0) return -1;
+			found = int(i);
+		}
+	return found;
+}
 }
