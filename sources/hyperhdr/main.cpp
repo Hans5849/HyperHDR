@@ -233,7 +233,7 @@ int main(int argc, char** argv)
 	if (logLevelCheck > 1)
 	{
 		Error(log, "aborting, because options --silent --verbose --debug can't be used together");
-		return 0;
+		return 1;
 	}
 
 	qInstallMessageHandler(Logger::qtMessageHandler);

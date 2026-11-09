@@ -1,5 +1,10 @@
 #include "commandline/Parser.h"
 
+#include <QCoreApplication>
+#include <cstdio>
+#include <cstdlib>
+#include <utility>
+
 using namespace commandline;
 
 Parser::~Parser()
@@ -16,7 +21,9 @@ bool Parser::parse(const QStringList& arguments)
 
 	for (Option* option : std::as_const(_options))
 	{
-		QString value = this->value(*option);
+		// Flags (empty valueName) carry no value. Asking QCommandLineParser for one
+		// emits "option not expecting values" for every registered flag.
+		QString value = option->valueName().isEmpty() ? QString() : this->value(*option);
 		if (!option->validate(*this, value))
 		{
 			const QString error = option->getError();
