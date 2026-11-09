@@ -14,6 +14,13 @@ STREAMON/QBUF/DQBUF failure, EAGAIN, payload bounds, restart and cleanup. The
 application accepts one contiguous memory plane; generic multi-plane allocation
 is tested but is not a promise of multi-plane decoder support.
 
+A simulated node set (UVC grabber, `snps_hdmirx`-style receiver, Rockchip
+codec/RGA nodes, ISP metadata and output nodes) checks that discovery depends
+only on reported capabilities and not on `/dev/videoN` order, that a receiver
+without a signal is still discovered, that a saved device follows its card name
+across renumbering, and how `power_present` and DV-timings errors map to
+"no signal" while USB devices stay "unknown".
+
 ```sh
 g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined \
   -fno-omit-frame-pointer -Iinclude tests/v4l2/main.cpp -o build/v4l2-tests/sanitized
