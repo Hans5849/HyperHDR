@@ -39,6 +39,15 @@ jobs:
           cmake --build build-codec -j --target DecoderTest
           ctest --test-dir build-codec --output-on-failure
 
+      - name: Command-line parser tests (no Qt option warnings)
+        run: |
+          cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-cli -j
+          ctest --test-dir build-cli --output-on-failure
+
+      - name: Debian version mapping
+        run: cmake -P tests/packaging/debian-version-test.cmake
+
 ######################
 ###### Linux #########
 ######################
@@ -97,6 +106,28 @@ jobs:
         shell: bash
         run: |
           ./build.sh
+
+      - name: Check Debian package metadata
+        if: matrix.distroName == 'debian' || matrix.distroName == 'ubuntu'
+        shell: bash
+        run: |
+          DEB=$(find deploy -maxdepth 1 -type f -name "Hyper*.deb" | head -n 1)
+          test -n "$DEB" || { echo "no .deb produced"; exit 1; }
+          bash tests/packaging/check-deb.sh "$DEB" --version-file version --arch ${{ matrix.architecture }}
+
+      - name: Install package and run command-line checks
+        if: matrix.distroName == 'debian' && matrix.distroVersion == 'trixie' && (matrix.architecture == 'amd64' || matrix.architecture == 'arm64')
+        shell: bash
+        run: |
+          docker run --rm -v "$PWD:/w:ro" --entrypoint /bin/bash \
+            ghcr.io/awawa-dev/${{ matrix.architecture }}/debian:trixie -c '
+              set -e
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /w/deploy/Hyper*.deb
+              hyperhdr --version | tee /tmp/version.txt
+              grep -F "$(head -n1 /w/version)" /tmp/version.txt
+              bash /w/tests/cli/hyperhdr-cli-smoke.sh --daemon /usr/bin/hyperhdr
+            '
 
       - name: Clear branch ccache storage
         if: startsWith(github.event.ref, 'refs/tags') == false
