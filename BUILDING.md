@@ -199,3 +199,10 @@ Use -D prefix when configuring the build.
     * USE_STATIC_QT_PLUGINS = ON | OFF, embed static QT-plugins into the app
     * USE_STANDARD_INSTALLER_NAME = ON | OFF, use standard Linux package naming
     * ENABLE_DEPENDENCY_PACKAGING = ON | OFF, bundle dependency libs into the Linux installer
+
+## Checking an installation
+
+On Linux, `scripts/diagnostics/hyperhdr-doctor.sh` checks the prerequisites,
+package, service, user data, network ports, capture devices and LED device access.
+It prints a fix for each problem and changes nothing. See
+[docs/diagnostics.md](docs/diagnostics.md).

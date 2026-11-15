@@ -60,6 +60,9 @@ jobs:
       - name: RK3588 evidence collector (stub board, redaction, read-only)
         run: bash tests/rk3588/collect-evidence-test.sh
 
+      - name: Installation and diagnostics checks (stubbed systems, read-only)
+        run: bash tests/diagnostics/doctor-test.sh
+
 ######################
 ###### Linux #########
 ######################

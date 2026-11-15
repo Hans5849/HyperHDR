@@ -44,16 +44,10 @@ mkdir -p "$BUNDLE"
 trap 'rm -rf "$WORK"' EXIT
 
 HOST=$(hostname 2>/dev/null || true)
-ME=$(id -un 2>/dev/null || true); [ "$ME" = root ] && ME=""   # "root" is not identifying
-redact() {
-	sed -E \
-		-e 's/([0-9]{1,3}\.){3}[0-9]{1,3}/<ipv4>/g' \
-		-e 's/([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}/<mac>/g' \
-		-e 's/\b([0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}\b/<ipv6>/g' \
-		-e 's/\b[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4})*::([0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{1,4})*)?\b/<ipv6>/g' \
-		${HOST:+-e "s/\\b${HOST}\\b/<host>/g"} \
-		${ME:+-e "s/\\b${ME}\\b/<user>/g"}
-}
+ME=$(id -un 2>/dev/null || true)
+# shellcheck source=../lib/redact.sh
+. "$HERE/../lib/redact.sh"
+redact() { REDACT_HOST="$HOST" REDACT_USER="$ME" hh_redact; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # capture <file> <command...>: run with a timeout, keep stdout+stderr and rc.
