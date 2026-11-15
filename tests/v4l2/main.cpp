@@ -747,5 +747,183 @@ int main()
 		REQUIRE(r.host.retryMs == 3000 && r.sup.recovery().failures() == 1);
 		REQUIRE(r.host.count(LogLevel::Warning, "streaming failed") == 2);   // warned again after the reset
 	});
+	// ---- Recovery regression coverage (issues #11, #19) -----------------------------
+	// Expected behaviour is taken from the supervisor's documented states; none of
+	// these changes production code.
+	test("supervisor: a retry that finds no signal waits instead of backing off", [] {
+		using Next = FakeHost::Next;
+		Rig r; r.host.script = { Next::StreamFail, Next::NoSignal };
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == 3000);
+		r.step([&] { r.sup.retryTimerFired(); });
+		// The receiver went dark while we were backing off: no timer keeps ticking.
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal);
+		REQUIRE(r.host.retryMs < 0 && r.host.polling && r.host.waitOpen && !r.host.capture);
+		const auto starts = r.host.starts;
+		for (int i = 0; i < 20; ++i) r.step([&] { r.sup.signalPollFired(); });
+		REQUIRE(r.host.starts == starts && r.host.probes == 20);       // probes only, no capture attempts
+		r.host.waiting = { Signal::Present, "detected 3840x2160p" };
+		r.step([&] { r.sup.signalPollFired(); });                      // signal returns
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.host.capture && !r.host.polling && r.host.retryMs < 0);
+		r.step([&] { r.sup.frameReceived(); });
+		REQUIRE(r.host.count(LogLevel::Info, "Capture recovered after") == 1);
+	});
+	test("supervisor: events outside streaming change nothing", [] {
+		using Next = FakeHost::Next;
+		for (auto first : { Next::StreamFail, Next::NoSignal })
+		{
+			Rig r; r.host.script = { first };
+			r.step([&] { r.sup.start(); });
+			const auto state = r.sup.state();
+			const int retry = r.host.retryMs;
+			const unsigned starts = r.host.starts, stops = r.host.stops, probes = r.host.probes, failures = r.sup.recovery().failures();
+			const size_t logs = r.host.logs.size();
+			// A source change, stall, stream error or worker error that was queued before
+			// teardown must not start, stop or re-arm anything.
+			r.step([&] {
+				r.sup.sourceEvent(true, { Signal::Present, "detected 3840x2160p" });
+				r.sup.sourceEvent(false, {});
+				r.sup.stalled({ Signal::Present, "detected 1920x1080p" });
+				r.sup.stalled({ Signal::Absent, "no signal" });
+				r.sup.streamFailed("late worker error");
+			});
+			REQUIRE(r.sup.state() == state && r.host.retryMs == retry);
+			REQUIRE(r.host.starts == starts && r.host.stops == stops && r.host.probes == probes);
+			REQUIRE(r.sup.recovery().failures() == failures && r.host.logs.size() == logs);
+		}
+	});
+	test("supervisor: source change during recovery doesn't skip the backoff", [] {
+		using Next = FakeHost::Next;
+		Rig r; r.host.script = { Next::StreamFail, Next::StreamFail };
+		r.step([&] { r.sup.start(); });
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.host.retryMs == 6000);
+		r.step([&] { r.sup.sourceEvent(true, { Signal::Present, "detected 1920x1080p" }); });   // arrives while backing off
+		REQUIRE(r.host.retryMs == 6000 && r.sup.state() == Supervisor::State::Backoff);
+		r.step([&] { r.sup.retryTimerFired(); });                                               // script exhausted: succeeds
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming);
+		// Once streaming again, a real source change takes the quick path.
+		r.step([&] { r.sup.sourceEvent(true, { Signal::Present, "detected 3840x2160p" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == Recovery::sourceChangeDelayMs);
+	});
+	test("supervisor: device vanishing mid-stream and returning", [] {
+		using Next = FakeHost::Next;
+		Rig d;
+		d.step([&] { REQUIRE(d.sup.start()); });
+		REQUIRE(d.sup.state() == Supervisor::State::Streaming);
+		d.host.script = { Next::InitFail, Next::InitFail, Next::InitFail };    // /dev node gone for three retries, then back
+		d.step([&] { d.sup.streamFailed("streaming: VIDIOC_DQBUF: No such device"); });
+		std::vector<int> delays{ d.host.retryMs };
+		for (int i = 0; i < 3; ++i) { d.step([&] { d.sup.retryTimerFired(); }); delays.push_back(d.host.retryMs); }
+		REQUIRE(delays == (std::vector<int>{ 3000, 6000, 12000, 24000 }));
+		REQUIRE(d.sup.state() == Supervisor::State::Backoff);
+		d.step([&] { d.sup.retryTimerFired(); });                              // fourth retry: node is back, script exhausted
+		REQUIRE(d.sup.state() == Supervisor::State::Streaming);
+		REQUIRE(d.host.capture && d.host.retryMs < 0 && !d.host.polling);
+		d.step([&] { d.sup.frameReceived(); });
+		REQUIRE(d.host.count(LogLevel::Info, "Capture recovered after") == 1);
+	});
+	test("supervisor: repeated start and stop cycles hold nothing", [] {
+		using Next = FakeHost::Next;
+		Rig r;
+		const Next outcomes[] = { Next::Ok, Next::NoSignal, Next::StreamFail, Next::InitFail, Next::Generic };
+		for (int i = 0; i < 400; ++i)
+		{
+			r.host.script = { outcomes[i % 5] };
+			r.step([&] { r.sup.start(); });
+			if (i % 7 == 0) r.step([&] { r.sup.retryTimerFired(); r.sup.signalPollFired(); });
+			r.step([&] { r.sup.stop(); });
+			REQUIRE(r.sup.state() == Supervisor::State::Stopped);
+			REQUIRE(!r.host.capture && !r.host.polling && !r.host.waitOpen && r.host.retryMs < 0);   // no leaked handle, timer or wait
+		}
+		REQUIRE(r.host.starts >= 400);
+		REQUIRE(r.host.stops >= r.host.starts - 1);   // every start was matched by a stop
+	});
+	test("supervisor: randomized events keep state and resources consistent", [] {
+		using Next = FakeHost::Next;
+		uint32_t seed = 0x2545f491u;
+		auto rnd = [&] { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed; };
+		Rig r;
+		unsigned lastStarts = 0, maxPending = 0;
+		for (int step = 0; step < 40000; ++step)
+		{
+			const unsigned action = rnd() % 9;
+			if (r.host.script.size() < 2 && rnd() % 2)
+				r.host.script.push_back(static_cast<Next>(rnd() % 5));
+			r.host.waiting = { rnd() % 3 ? Signal::Absent : Signal::Present, "random" };
+			r.host.nodeOpens = rnd() % 4 != 0;
+			const bool mayStart = action <= 2;
+			switch (action)
+			{
+				case 0: r.sup.start(); break;
+				case 1: r.sup.retryTimerFired(); break;
+				case 2: r.sup.signalPollFired(); break;
+				case 3: r.sup.stalled({ rnd() % 2 ? Signal::Absent : Signal::Present, "stall" }); break;
+				case 4: r.sup.sourceEvent(rnd() % 2, { rnd() % 3 ? Signal::Present : Signal::Absent, "event" }); break;
+				case 5: r.sup.streamFailed("random stream error"); break;
+				case 6: r.sup.frameReceived(); break;
+				case 7: if (rnd() % 4 == 0) r.sup.stop(); break;
+				default: r.sup.shortFrame(); break;
+			}
+			r.host.invariant();                                             // at most one of capture / retry timer / signal wait
+			maxPending = std::max(maxPending, unsigned(r.host.capture) + unsigned(r.host.retryMs >= 0) + unsigned(r.host.polling));
+			switch (r.sup.state())
+			{
+				case Supervisor::State::Stopped:
+					REQUIRE(!r.host.capture && !r.host.polling && !r.host.waitOpen && r.host.retryMs < 0); break;
+				case Supervisor::State::Streaming:
+					REQUIRE(r.host.capture && r.host.retryMs < 0 && !r.host.polling); break;
+				case Supervisor::State::Backoff:
+					REQUIRE(!r.host.capture && r.host.retryMs > 0 && !r.host.polling); break;
+				case Supervisor::State::WaitingForSignal:
+					REQUIRE(!r.host.capture && r.host.retryMs < 0 && r.host.polling); break;
+			}
+			// No busy polling or hidden restarts: a capture attempt happens only on an
+			// explicit start, the retry timer or a signal poll.
+			if (!mayStart) REQUIRE(r.host.starts == lastStarts);
+			lastStarts = r.host.starts;
+		}
+		REQUIRE(maxPending <= 1);
+	});
+	test("1080p/4K source timing transitions: negotiation and payload sizes", [] {
+		struct TimingDriver : Operations {
+			v4l2_dv_timings detected{}, current{};
+			unsigned sets = 0;
+			TimingDriver() {
+				detected.type = V4L2_DV_BT_656_1120; detected.bt.width = 1920; detected.bt.height = 1080;
+				detected.bt.pixelclock = 148500000; current = detected;
+			}
+			int control(int, unsigned long request, void* arg) override {
+				if (request == VIDIOC_QUERY_DV_TIMINGS) *static_cast<v4l2_dv_timings*>(arg) = detected;
+				else if (request == VIDIOC_G_DV_TIMINGS) *static_cast<v4l2_dv_timings*>(arg) = current;
+				else if (request == VIDIOC_S_DV_TIMINGS) { ++sets; current = *static_cast<v4l2_dv_timings*>(arg); }
+				return 0;
+			}
+		} f;
+		refreshTimings(f, 3); REQUIRE(f.sets == 0);                        // already 1080p: nothing to set
+		f.detected.bt.width = 3840; f.detected.bt.height = 2160; f.detected.bt.pixelclock = 297000000;
+		refreshTimings(f, 3);                                              // source moved to 4K30
+		REQUIRE(f.sets == 1 && f.current.bt.width == 3840 && f.current.bt.height == 2160);
+		refreshTimings(f, 3); REQUIRE(f.sets == 1);                        // settled: no repeated set
+		f.detected.bt.width = 1920; f.detected.bt.height = 1080; f.detected.bt.pixelclock = 148500000;
+		refreshTimings(f, 3); REQUIRE(f.sets == 2 && f.current.bt.width == 1920);   // and back
+
+		// The negotiated frame sizes the grabber compares payloads against.
+		auto negotiated = [](unsigned w, unsigned h) {
+			v4l2_format fmt{}; fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+			auto& p = fmt.fmt.pix_mp; p.width = w; p.height = h; p.pixelformat = V4L2_PIX_FMT_BGR24; p.num_planes = 1;
+			p.plane_fmt[0].bytesperline = w * 3; p.plane_fmt[0].sizeimage = w * 3 * h;
+			const auto native = format(fmt); validateFormat(native); return native;
+		};
+		const auto hd = negotiated(1920, 1080), uhd = negotiated(3840, 2160);
+		REQUIRE(hd.size == 6220800 && hd.stride == 5760);
+		REQUIRE(uhd.size == 24883200 && uhd.stride == 11520);              // matches the 4K30 capture measured on the board
+		// A 1080p payload arriving after the receiver switched to 4K is short: dropped
+		// when isolated, a restart when it persists.
+		REQUIRE(hd.size < uhd.size);
+		Recovery recovery;
+		REQUIRE(!recovery.shortFrame() && !recovery.shortFrame() && recovery.shortFrame());
+		REQUIRE(recovery.frameReceived() == 0 && !recovery.shortFrame());  // a good frame resets the run
+	});
 	std::cout << passed << " test groups passed\n";
 }
