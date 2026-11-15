@@ -157,6 +157,7 @@ QString cpuName();
 int main(int argc, char* argv[]) {
 	QCoreApplication app(argc, argv);
 	if (app.arguments().contains("--bgr24-check")) return checkBgr24Decoder();
+	if (app.arguments().contains("--bgr24-bench")) return benchBgr24Decoder();
 	QTextStream out(stdout);
 
 	auto fmtCell = [](const QString& text, int width) {
