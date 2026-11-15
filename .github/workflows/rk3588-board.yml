@@ -174,7 +174,17 @@ jobs:
               echo "WARNING: load average above 1.0 before the run; not a baseline" >>"$out"
             fi
             status=0
-            taskset -c "$cpu" "$BENCH" --bgr24-bench >>"$out" 2>&1 || status=$?
+            # Text table to the .txt as before; the same run also writes JSON (raw
+            # samples included) and CSV with commit, core, governor, frequency,
+            # thermal and load metadata (docs/rk3588-benchmark-reporting.md).
+            # random = the original input; gradient/solid bound the LUT locality effect.
+            json="${out%.txt}.json"
+            taskset -c "$cpu" "$BENCH" --bgr24-bench --pattern random,gradient,solid --raw \
+              --json "$json" --csv "${out%.txt}.csv" --commit "$GITHUB_SHA" --label "$name" >>"$out" 2>&1 || status=$?
+            if [ "$status" -eq 0 ] && [ ! -s "$json" ]; then
+              echo "benchmark exited 0 but wrote no $json" >>"$out"
+              status=1
+            fi
             { echo "-- after"; cpu_state "$cpu"; echo "exit status: $status"; } >>"$out" 2>&1
             cat "$out"
             if [ "$status" -ne 0 ]; then
@@ -182,6 +192,17 @@ jobs:
               failed=1
             fi
           done
+          # A76 vs A55, full vs quarter, LUT cost; verifies every summary against
+          # its raw samples. Needs only python3 (not a runner requirement).
+          jsons=(board-results/bgr24-bench-*.json)
+          if [ "${#jsons[@]}" -gt 0 ]; then
+            if command -v python3 >/dev/null; then
+              python3 scripts/rk3588/bench-summarize.py "${jsons[@]}" >board-results/bgr24-bench-summary.md || failed=1
+              cat board-results/bgr24-bench-summary.md
+            else
+              echo "::notice::python3 is not on the runner: summarize the uploaded JSON with scripts/rk3588/bench-summarize.py"
+            fi
+          fi
           exit "$failed"
 
       - name: Installation and diagnostics checks on the board (#27)

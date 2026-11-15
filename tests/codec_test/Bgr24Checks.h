@@ -1,6 +1,7 @@
 #pragma once
 #include <utils/FrameDecoder.h>
 #include <utils/Bgr24.h>
+#include "BenchReport.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -66,36 +67,78 @@ inline int checkBgr24Decoder()
 // pin it to one core to compare A76 and A55 (issue #12):
 //   taskset -c 4 build-codec/bin/DecoderTest --bgr24-bench    # RK3588 A76
 //   taskset -c 0 build-codec/bin/DecoderTest --bgr24-bench    # RK3588 A55
-inline int benchBgr24Decoder(int iterations = 200, int warmup = 10)
+// Optional (see docs/rk3588-benchmark-reporting.md): --json FILE, --csv FILE,
+// --raw, --pattern random,gradient,solid, --iterations N, --warmup N,
+// --commit SHA, --label NAME. Without options the output is the original table.
+inline int benchBgr24Decoder(const BenchReport::Options& options = {})
 {
+	if (!options.error.empty())
+	{
+		std::fprintf(stderr, "bgr24-bench: %s\n", options.error.c_str());
+		return 2;
+	}
 	constexpr int width = 1920, height = 1080, stride = 5760;
+	constexpr uint32_t seed = 12345;
 	std::vector<uint8_t> source(size_t(height - 1) * stride + width * 3);
-	uint32_t seed = 12345;
-	for (auto& b : source) { seed = seed * 1664525u + 1013904223u; b = uint8_t(seed >> 24); }
 	std::vector<uint8_t> lut(size_t(256) * 256 * 256 * 3, 0x80);   // full-size LUT, as captured frames use
-	std::printf("BGR24 decode %dx%d stride %d: %d timed runs per case after %d warm-up (ms)\n",
-		width, height, stride, iterations, warmup);
-	std::printf("%-8s %-8s %-4s %10s %10s %10s\n", "range", "output", "lut", "median", "p95", "min");
-	for (bool limited : {false, true})
-		for (bool quarter : {false, true})
-			for (bool tone : {false, true})
-			{
-				std::vector<double> ms;
-				Image<ColorRgb> image;
-				for (int i = 0; i < warmup + iterations; ++i)
+
+	BenchReport::Run run;
+	run.width = width; run.height = height; run.stride = stride;
+	run.lutBytes = lut.size(); run.lutFill = "constant 0x80"; run.seed = seed;
+	run.meta = BenchReport::collect(BenchReport::SysRoot{}, BenchReport::processAffinity(), BenchReport::currentCpu());
+	run.meta.commit = options.commit;
+	run.meta.label = options.label;
+
+	for (const auto& pattern : options.patterns)
+	{
+		std::fill(source.begin(), source.end(), uint8_t(0));
+		BenchReport::fillPattern(pattern, source, width, height, stride, seed);
+		for (bool limited : {false, true})
+			for (bool quarter : {false, true})
+				for (bool tone : {false, true})
 				{
-					const auto start = std::chrono::steady_clock::now();
-					FrameDecoder::dispatchProcessImageVector[quarter][tone][false](0, 0, 0, 0,
-						source.data(), nullptr, width, height, stride,
-						limited ? PixelFormat::BGR24_LIMITED : PixelFormat::BGR24, lut.data(), image, nullptr);
-					const auto end = std::chrono::steady_clock::now();
-					if (i >= warmup)
-						ms.push_back(std::chrono::duration<double, std::milli>(end - start).count());
+					BenchReport::Case c;
+					c.range = limited ? "limited" : "full";
+					c.output = quarter ? "quarter" : "full";
+					c.lut = tone;
+					c.pattern = pattern;
+					c.warmup = options.warmup;
+					if (tone)
+						c.profile = BenchReport::accessProfile(source.data(), width, height, stride, quarter, limited);
+					Image<ColorRgb> image;
+					const uint8_t* lastBuffer = nullptr;
+					for (int i = 0; i < options.warmup + options.iterations; ++i)
+					{
+						const auto start = std::chrono::steady_clock::now();
+						FrameDecoder::dispatchProcessImageVector[quarter][tone][false](0, 0, 0, 0,
+							source.data(), nullptr, width, height, stride,
+							limited ? PixelFormat::BGR24_LIMITED : PixelFormat::BGR24, lut.data(), image, nullptr);
+						const auto end = std::chrono::steady_clock::now();
+						const int64_t ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+						if (i == 0) c.firstNs = ns;
+						if (i >= options.warmup)
+						{
+							if (lastBuffer && image.rawMem() != lastBuffer) ++c.outputReallocations;
+							c.samplesNs.push_back(ns);
+						}
+						lastBuffer = image.rawMem();
+					}
+					c.outputWidth = int(image.width());
+					c.outputHeight = int(image.height());
+					run.cases.push_back(std::move(c));
 				}
-				std::sort(ms.begin(), ms.end());
-				std::printf("%-8s %-8s %-4s %10.3f %10.3f %10.3f\n", limited ? "limited" : "full",
-					quarter ? "quarter" : "full", tone ? "yes" : "no",
-					ms[ms.size() / 2], ms[(ms.size() * 95) / 100], ms.front());
-			}
-	return 0;
+	}
+	run.meta.after = BenchReport::snapshot(BenchReport::SysRoot{}, run.meta.pinnedCpu);
+
+	std::fputs(BenchReport::text(run, options.iterations, options.warmup).c_str(), stdout);
+	int status = 0;
+	auto write = [&](const std::optional<std::string>& path, const std::string& body) {
+		if (!path) return;
+		std::FILE* f = std::fopen(path->c_str(), "wb");
+		if (!f || std::fwrite(body.data(), 1, body.size(), f) != body.size()) { std::fprintf(stderr, "bgr24-bench: cannot write %s\n", path->c_str()); status = 1; }
+		if (f && std::fclose(f) != 0) status = 1;
+	};
+	write(options.jsonPath, BenchReport::json(run, options.raw));
+	write(options.csvPath, BenchReport::csv(run));
+	return status;
 }
