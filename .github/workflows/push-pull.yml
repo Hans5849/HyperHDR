@@ -48,6 +48,9 @@ jobs:
       - name: Debian version mapping
         run: cmake -P tests/packaging/debian-version-test.cmake
 
+      - name: RK3588 evidence collector (stub board, redaction, read-only)
+        run: bash tests/rk3588/collect-evidence-test.sh
+
 ######################
 ###### Linux #########
 ######################
