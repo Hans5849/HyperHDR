@@ -158,7 +158,9 @@ void testUnavailableIsNotZero()
 	Sim sim;
 	for (uint32_t i = 0; i < 5; ++i) sim.frame(0);                         // a driver that always reports sequence 0
 	auto s = sim.st.snapshot(true);
-	REQUIRE(!s.missedFrames && s.duplicateSequences == 4);
+	// No duplicates either: a number that never moves carries no information
+	// (changed in the #32 hardening; it previously counted 4 here).
+	REQUIRE(!s.missedFrames && s.duplicateSequences == 0);
 	REQUIRE(!s.p50Us && !s.p95Us && !s.p99Us && !s.meanUs && s.durationSamples == 0);
 	const auto line = Stats::format(s, 60.0);
 	REQUIRE(line.find("missed by driver sequence n/a") != std::string::npos);
@@ -257,6 +259,140 @@ void testConcurrentUpdatesAndSnapshots()
 	REQUIRE(observedDecoded + rest.decoded == static_cast<uint64_t>(threads) * per);        // nothing lost, nothing counted twice
 	REQUIRE(snapshotTotal + rest.durationSamples == static_cast<uint64_t>(threads) * per);
 }
+
+// ---- hardening (PR #32 review) -------------------------------------------------
+void testAbandonedByRestart()
+{
+	// Two workers hold frames when capture restarts; their late completions belong
+	// to the old stream and are discarded, but must still be accounted for.
+	Sim sim;
+	for (uint32_t q = 1; q <= 5; ++q) sim.frame(q);
+	sim.st.decoded(1000); sim.st.decoded(1200); sim.st.decodeFailed();
+	sim.st.restart();                                  // two frames still in workers
+	sim.st.abandoned(); sim.st.abandoned();            // their completions arrive after the restart
+	const auto s = sim.st.snapshot(true);
+	REQUIRE(s.consistent());
+	REQUIRE(s.accepted == 5 && s.decoded + s.decodeFailed + s.abandoned == s.accepted);   // nothing unaccounted
+	REQUIRE(s.abandoned == 2 && s.dropped() == 0);
+	REQUIRE(Stats::format(s, 1.0).find("2 abandoned by restart") != std::string::npos);
+}
+
+void testDriverWithoutSequenceNumbers()
+{
+	// Some drivers leave v4l2_buffer.sequence at 0: no gaps, no duplicates, and the
+	// gap count stays "unavailable" instead of 0.
+	Sim sim;
+	for (int i = 0; i < 100; ++i) sim.frame(0);
+	auto s = sim.st.snapshot(true);
+	REQUIRE(s.duplicateSequences == 0 && !s.missedFrames && s.sequenceResets == 0);
+	// Once the number moves, a real repeat is a duplicate.
+	sim.frame(1); sim.frame(2); sim.frame(2); sim.frame(3);
+	s = sim.st.snapshot(true);
+	REQUIRE(s.duplicateSequences == 1 && s.missedFrames && *s.missedFrames == 0);
+}
+
+void testReportLevels()
+{
+	StatsSnapshot none;
+	REQUIRE(reportLevel(none) == ReportLevel::None);
+	StatsSnapshot restartsOnly; restartsOnly.restarts = 4;          // failed starts during backoff: silent
+	REQUIRE(reportLevel(restartsOnly) == ReportLevel::None);
+
+	Sim clean; for (uint32_t q = 1; q <= 60; ++q) clean.frame(q, q % 2 ? Fate::Accept : Fate::Decimated);
+	for (int i = 0; i < 30; ++i) clean.st.decoded(800);
+	REQUIRE(reportLevel(clean.st.snapshot(true)) == ReportLevel::Debug);   // decimation is intentional
+
+	Sim abandoned; abandoned.frame(1); abandoned.st.restart(); abandoned.st.abandoned();
+	REQUIRE(reportLevel(abandoned.st.snapshot(true)) == ReportLevel::Debug);   // expected around a restart
+
+	for (Fate fate : { Fate::WorkerBusy, Fate::DriverError, Fate::Short, Fate::LutNotReady, Fate::Inactive, Fate::Undersized })
+	{
+		Sim lossy; lossy.frame(1); lossy.frame(2, fate);
+		REQUIRE(reportLevel(lossy.st.snapshot(true)) == ReportLevel::Info);
+	}
+	Sim failed; failed.frame(1); failed.st.decodeFailed();
+	REQUIRE(reportLevel(failed.st.snapshot(true)) == ReportLevel::Info);
+	Sim gap; gap.frame(1); gap.frame(5);
+	REQUIRE(reportLevel(gap.st.snapshot(true)) == ReportLevel::Info);       // driver dropped three
+	Sim mismatch; mismatch.st.dequeued();                                    // dequeued, no outcome
+	const auto m = mismatch.st.snapshot(true);
+	REQUIRE(!m.consistent() && reportLevel(m) == ReportLevel::Info);
+	REQUIRE(Stats::format(m, 1.0).find("ACCOUNTING MISMATCH") != std::string::npos);
+}
+
+void testFlushContext()
+{
+	Sim sim; for (uint32_t q = 1; q <= 10; ++q) sim.frame(q);
+	const auto s = sim.st.snapshot(true);
+	REQUIRE(Stats::format(s, 2.0, "capture stopped").rfind("capture stats (capture stopped): 5.0 fps dequeued", 0) == 0);
+	REQUIRE(Stats::format(s, 2.0).rfind("capture stats: 5.0 fps", 0) == 0);
+}
+
+void testAcceptTimesAreTiedToTheFrame()
+{
+	AcceptTimes t; t.resize(2);
+	t.accepted(0, 100, 1'000'000);
+	REQUIRE(t.completed(0, 100, 1'004'500) == std::optional<uint64_t>(4500));   // matched once
+	REQUIRE(!t.completed(0, 100, 1'009'000));                                    // a duplicate yields nothing
+	// A late completion of an older frame must not be timed against the newer one.
+	t.accepted(1, 200, 2'000'000);
+	REQUIRE(!t.completed(1, 199, 2'001'000));
+	REQUIRE(t.completed(1, 200, 2'003'000) == std::optional<uint64_t>(3000));    // the real one still works
+	REQUIRE(!t.completed(7, 200, 2'003'000));                                    // unknown worker
+	t.accepted(7, 1, 0);                                                         // ignored, no crash
+	t.accepted(0, 300, 5'000'000); t.clear();
+	REQUIRE(!t.completed(0, 300, 5'000'100));                                    // teardown disarms
+	t.accepted(0, 301, 6'000'000);
+	REQUIRE(t.completed(0, 301, 5'999'000) == std::optional<uint64_t>(0));       // clock step back: 0, not huge
+	t.accepted(1, 400, 1); t.resize(4);
+	REQUIRE(t.size() == 4 && !t.completed(1, 400, 2));                           // recreated workers start clean
+}
+
+void testLifecycleAccountingWithRestarts()
+{
+	// Mirrors the grabber across restarts: every dequeued buffer has one outcome,
+	// and every accepted frame ends decoded, failed or abandoned.
+	Rng rng; Sim sim; AcceptTimes times; times.resize(3);
+	uint64_t frame = 0, accepted = 0, finished = 0, durations = 0;
+	std::vector<uint64_t> inWorker(3, UINT64_MAX);
+	uint32_t seq = 0;
+	StatsSnapshot total;
+	auto drain = [&] {
+		const auto s = sim.st.snapshot(true);
+		REQUIRE(s.consistent());
+		total.dequeued += s.dequeued; total.accepted += s.accepted; total.decoded += s.decoded;
+		total.decodeFailed += s.decodeFailed; total.abandoned += s.abandoned; durations += s.durationSamples;
+	};
+	for (int i = 0; i < 50000; ++i)
+	{
+		const auto r = rng.next();
+		if (r % 4000 == 0)
+		{   // restart: frames in workers complete later as abandoned
+			sim.st.restart(); times.clear(); seq = 0;
+			for (auto& f : inWorker) if (f != UINT64_MAX) { sim.st.abandoned(); ++finished; f = UINT64_MAX; }
+			drain();
+			continue;
+		}
+		const size_t w = r % 3;
+		if (inWorker[w] != UINT64_MAX)
+		{   // this worker finishes its frame
+			if ((r >> 8) % 10) { auto us = times.completed(w, inWorker[w], 1000 + (r % 5000)); us ? sim.st.decoded(*us) : sim.st.decoded(); }
+			else { times.completed(w, inWorker[w], 0); sim.st.decodeFailed(); }
+			inWorker[w] = UINT64_MAX; ++finished;
+			continue;
+		}
+		++frame; ++seq;
+		if ((r >> 12) % 3 == 0) { sim.frame(seq, Fate::WorkerBusy); continue; }
+		sim.frame(seq, Fate::Accept); ++accepted;
+		times.accepted(w, frame, 1000); inWorker[w] = frame;
+		if (i % 5000 == 0) drain();
+	}
+	for (size_t w = 0; w < 3; ++w) if (inWorker[w] != UINT64_MAX) { sim.st.abandoned(); ++finished; }
+	drain();
+	REQUIRE(total.accepted == accepted && finished == accepted);
+	REQUIRE(total.decoded + total.decodeFailed + total.abandoned == total.accepted);
+	REQUIRE(durations == total.decoded);   // every decode after a matched accept was timed exactly once
+}
 }
 
 int main()
@@ -273,6 +409,12 @@ int main()
 	testHistogramErrorBound();
 	testAccountingInvariantUnderRandomStreams();
 	testConcurrentUpdatesAndSnapshots();
+	testAbandonedByRestart();
+	testDriverWithoutSequenceNumbers();
+	testReportLevels();
+	testFlushContext();
+	testAcceptTimesAreTiedToTheFrame();
+	testLifecycleAccountingWithRestarts();
 	if (failures) { std::fprintf(stderr, "%d check(s) failed\n", failures); return 1; }
 	std::puts("all V4L2 stats checks passed");
 	return 0;

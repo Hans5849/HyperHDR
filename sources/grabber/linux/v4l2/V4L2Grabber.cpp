@@ -778,6 +778,14 @@ void V4L2Grabber::teardownCapture()
 	uninit_device();
 	close_device();
 	_initialized = false;
+	// Stops, restarts after a stall or source change, and shutdown all pass
+	// through here: report the partial interval instead of losing it.
+	if (_statsIntervalBegin != 0)
+	{
+		reportCaptureStats(InternalClock::now(), "capture stopped");
+		_statsIntervalBegin = 0;
+	}
+	_acceptTimes.clear();
 }
 
 // Non-streaming handle on the receiver while it reports no input: no buffers,
@@ -1232,14 +1240,16 @@ void V4L2Grabber::start_capturing()
 	_buffers.start();
 }
 
-void V4L2Grabber::reportCaptureStats(qint64 now)
+void V4L2Grabber::reportCaptureStats(qint64 now, const std::string& context)
 {
 	const double seconds = static_cast<double>(now - _statsIntervalBegin) / 1000.0;
 	_statsIntervalBegin = now;
 	const auto snapshot = _stats.snapshot(true);
-	const QString line = QString::fromStdString(V4L2Capture::Stats::format(snapshot, seconds));
-	// Quiet when nothing was lost; one line per interval otherwise.
-	if (snapshot.dropped() > 0 || snapshot.decodeFailed > 0 || (snapshot.missedFrames && *snapshot.missedFrames > 0) || !snapshot.consistent())
+	const auto level = V4L2Capture::reportLevel(snapshot);
+	if (level == V4L2Capture::ReportLevel::None)
+		return;
+	const QString line = QString::fromStdString(V4L2Capture::Stats::format(snapshot, seconds, context));
+	if (level == V4L2Capture::ReportLevel::Info)
 		Info(_log, "{:s}", (line));
 	else
 		Debug(_log, "{:s}", (line));
@@ -1365,7 +1375,7 @@ bool V4L2Grabber::process_image(v4l2_buffer* buf, const void* frameImageBuffer, 
 					connect(_V4L2WorkerManager.workers[i].get(), &GrabberWorker::SignalNewFrameError, this, &V4L2Grabber::newWorkerFrameErrorHandler);
 					connect(_V4L2WorkerManager.workers[i].get(), &GrabberWorker::SignalNewFrame, this, &V4L2Grabber::newWorkerFrameHandler);
 				}
-				_acceptedAtUs.assign(_V4L2WorkerManager.workers.size(), 0);
+				_acceptTimes.resize(_V4L2WorkerManager.workers.size());
 			}
 
 			frameStat.segment |= (1 << buf->index);
@@ -1411,8 +1421,7 @@ bool V4L2Grabber::process_image(v4l2_buffer* buf, const void* frameImageBuffer, 
 						// Before the worker starts: with one worker the decode runs on this thread
 						// and its completion handler may run before this function returns.
 						_stats.accepted();
-						if (i < _acceptedAtUs.size())
-							_acceptedAtUs[i] = InternalClock::nowMicro();
+						_acceptTimes.accepted(i, processFrameIndex, InternalClock::nowMicro());
 
 						if (_V4L2WorkerManager.workersCount > 1)
 							_V4L2WorkerManager.workers[i]->start();
@@ -1452,20 +1461,21 @@ void V4L2Grabber::returnBuffer(unsigned int workerIndex, quint64 sourceCount)
 
 void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString error, quint64 sourceCount)
 {
-	if (!_initialized || sourceCount < _generationFrame) return;
+	if (!_initialized || sourceCount < _generationFrame) { _stats.abandoned(); return; }
 	++frameStat.badFrame;
 	_stats.decodeFailed();
+	_acceptTimes.completed(workerIndex, sourceCount, InternalClock::nowMicro());   // free the slot, no sample
 	Error(_log, "Frame decoding: {:s}", error);
 	returnBuffer(workerIndex, sourceCount);
 }
 
 void V4L2Grabber::newWorkerFrameHandler(unsigned int workerIndex, Image<ColorRgb> image, quint64 sourceCount, qint64 frameBegin)
 {
-	if (!_initialized || sourceCount < _generationFrame) return;
-	if (workerIndex < _acceptedAtUs.size() && _acceptedAtUs[workerIndex] > 0)
-		_stats.decoded(static_cast<uint64_t>(InternalClock::nowMicro() - _acceptedAtUs[workerIndex]));
+	if (!_initialized || sourceCount < _generationFrame) { _stats.abandoned(); return; }
+	if (const auto us = _acceptTimes.completed(workerIndex, sourceCount, InternalClock::nowMicro()))
+		_stats.decoded(*us);
 	else
-		_stats.decoded();
+		_stats.decoded();   // no matching acceptance: counted, but no duration sample
 	handleNewFrame(workerIndex, image, sourceCount, frameBegin);
 	returnBuffer(workerIndex, sourceCount);
 }

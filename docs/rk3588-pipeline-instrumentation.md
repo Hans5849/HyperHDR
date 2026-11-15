@@ -36,14 +36,18 @@ mismatch is printed as `ACCOUNTING MISMATCH`).
 | `lutNotReady` | a LUT is needed but still loading |
 | `workerBusy` | no idle decode worker |
 | `accepted` | handed to a worker |
-| `decoded` / `decodeFailed` | worker returned an image / an error (may land in the next interval; over a stream `decoded + decodeFailed <= accepted`) |
+| `decoded` / `decodeFailed` | worker returned an image / an error (may land in the next interval) |
+| `abandoned` | the worker finished after capture restarted, so its result belongs to the old stream and is discarded. Over a stream, `decoded + decodeFailed + abandoned <= accepted`; the difference is frames still in a worker |
 | missed by driver sequence | gaps in `v4l2_buffer.sequence`, counted as missing frames |
-| `restarts`, sequence resets | capture restarts; driver sequence going backwards or repeating |
+| `restarts`, sequence resets, duplicate sequences | capture restarts; the driver sequence going backwards; the same sequence twice (only counted once the driver's sequence has been seen to move) |
 
 "Dropped" in the log decision means every discard except decimation.
 
 Stage timing is **accept to decoded-callback**, in userspace steady-clock
-microseconds: p50/p95/p99 from a fixed 240-bucket log-linear histogram (8 buckets
+microseconds. Each worker's timestamp slot records *which frame* it timed; a
+completion is timed only if it is for that frame and only once, so a stale,
+duplicate or out-of-order callback never borrows another frame's start time
+(`AcceptTimes`). Results: p50/p95/p99 from a fixed 240-bucket log-linear histogram (8 buckets
 per octave; the reported value is the bucket's upper bound, never below the true
 value and at most 12.5% above it; exact below 8 us). It includes worker-thread
 queuing and the hop back to the grabber thread, and excludes dequeue time. The
@@ -54,7 +58,7 @@ V4L2 kernel timestamp is never mixed in: it is a different clock.
 - Percentiles are `n/a` when there were no decoded frames in the interval.
 - The missed-frames figure is `n/a` until the driver's sequence number has been
   seen to change (some drivers always report 0), so a driver that doesn't count
-  can't look like a perfect stream.
+  can't look like a perfect stream. Such a driver also reports 0 duplicates.
 - **LED output rate and DDP timing are not instrumented** and are printed as
   `n/a (not instrumented)`.
 
@@ -89,12 +93,20 @@ number, and was not measured on the board.
 
 ## Reading the log
 
-Once per interval, at Info level when something was lost (a discard other than
-decimation, a decode error, a missed sequence, or an accounting mismatch) and at
-Debug level otherwise:
+Once per interval, and once more when capture is torn down: on a stop, a
+restart after a stall, signal loss, source change or error, and at shutdown. The
+partial interval is reported then, so it isn't lost when frames stop arriving.
+The level comes from `reportLevel()`:
+- **nothing** when no frame moved. A failed start during backoff stays silent.
+- **Info** when something was lost: a discard other than decimation, a decode
+  error, a missed sequence, or an accounting mismatch.
+- **Debug** otherwise. Frames abandoned by a restart and decimated frames are
+  expected, so they don't raise the level.
+
+Torn-down intervals are labelled `capture stats (capture stopped): ...`.
 
 ```
-capture stats: 30.0 fps dequeued, 1740 accepted, 1740 decoded, 0 decode errors; discarded 60 (decimation 60, worker busy 0, LUT loading 0, workers inactive 0, driver error 0, short payload 0, undersized 0); missed by driver sequence 0; accept->decoded p50/p95/p99 4.10/5.20/6.30 ms (1740 samples); restarts 1, sequence resets 0; LED output rate n/a, DDP timing n/a (not instrumented)
+capture stats: 30.0 fps dequeued, 1740 accepted, 1740 decoded, 0 decode errors, 0 abandoned by restart; discarded 60 (decimation 60, worker busy 0, LUT loading 0, workers inactive 0, driver error 0, short payload 0, undersized 0); missed by driver sequence 0; accept->decoded p50/p95/p99 4.10/5.20/6.30 ms (1740 samples); restarts 1, sequence resets 0, duplicate sequences 0; LED output rate n/a, DDP timing n/a (not instrumented)
 ```
 
 (Illustrative format, not a measurement.)
@@ -106,7 +118,13 @@ busy; software decimation; short frame; driver error and the other discard cause
 restart and sequence reset; counter reset; sequence wraparound; decode failure and
 recovery; unavailable versus zero; histogram error bounds and percentile rank; a
 200000-frame randomized stream checking the accounting identity at every
-snapshot; and concurrent writers with a snapshotting reader.
+snapshot; and concurrent writers with a snapshotting reader. Hardening tests:
+- frames abandoned by a restart
+- drivers without sequence numbers
+- every report level, including silent restarts-only intervals and an accounting mismatch
+- the flush label
+- frame-keyed acceptance times (stale, duplicate, out-of-order, unknown worker, clock step back, teardown, worker re-creation)
+- a 50000-step lifecycle with restarts, checking that every accepted frame ends decoded, failed or abandoned, and that each decode is timed exactly once
 
 ## Not verified
 
