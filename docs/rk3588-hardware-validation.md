@@ -207,6 +207,7 @@ Started
 | `timeout:` | Streaming, but no complete frame for 5 s while the receiver does not report a missing signal | Restart with 3 s to 30 s backoff |
 | `initialization failed:` | Discovery, open, format negotiation or buffer setup failed | Restart with backoff |
 | `streaming failed:` | STREAMON, QBUF or DQBUF failure, invalid payloads, repeated short frames | Restart with backoff |
+| `streaming failed: decoding:` | Buffers keep arriving but at least 30 consecutive frames failed to decode over at least 5 s. Isolated decode errors (a corrupt MJPEG frame) never restart | Restart with backoff. After a decode restart only a successfully decoded frame counts as recovery, so repeated failures back off 3 → 30 s |
 | `source changed:` | Source-change event while streaming | Fast restart (500 ms) |
 
 Each category is logged as a warning once per outage (as info for `no signal` and
