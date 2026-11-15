@@ -25,6 +25,10 @@ on:
         description: "probe stage: also run the EXPBUF probe (opens the receiver; HyperHDR must not be capturing on the board)"
         type: boolean
         default: false
+      host_idle_confirmed:
+        description: "expbuf with a container runner: you stopped the host's HyperHDR service (the container can't see host processes)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -49,11 +53,13 @@ jobs:
         env:
           STAGE: ${{ inputs.stage }}
           EXPBUF: ${{ inputs.expbuf }}
+          HOST_IDLE: ${{ inputs.host_idle_confirmed }}
         run: |
           mkdir -p board-results
-          args=(--env "$GITHUB_ENV" --metadata board-results/metadata.json --inputs "{\"stage\":\"$STAGE\",\"expbuf\":$EXPBUF}")
+          args=(--env "$GITHUB_ENV" --metadata board-results/metadata.json --inputs "{\"stage\":\"$STAGE\",\"expbuf\":$EXPBUF,\"host_idle_confirmed\":$HOST_IDLE}")
           [ "$STAGE" = probe ] && args+=(--require-receiver)
           [ "$STAGE" = probe ] && [ "$EXPBUF" = true ] && args+=(--exclusive)
+          [ "$HOST_IDLE" = true ] && args+=(--host-idle-attested)
           bash scripts/rk3588/board-preflight.sh "${args[@]}" | tee board-results/preflight.txt
 
       - name: Board and toolchain
@@ -103,23 +109,72 @@ jobs:
           bash tests/rk3588/board-preflight-test.sh
 
       # Release build without sanitizers, pinned to one core per cluster. The
-      # preflight found which CPUs are Cortex-A76 and Cortex-A55.
+      # preflight found which CPUs are Cortex-A76 and Cortex-A55 and which of them
+      # this runner's container may use.
+      #
+      # DecoderTest is written to ${PROJECT_BINARY_DIR}/bin (EXECUTABLE_OUTPUT_PATH
+      # in tests/codec_test/CMakeLists.txt), so the binary is build-codec/bin/DecoderTest.
+      # tests/ci/board-workflow-policy-test.py checks this path against that CMake
+      # file. The first board run failed with exit 127 on ./build-codec/DecoderTest.
+      #
+      # Each result is written to a file, not piped through tee, so a failing
+      # benchmark fails the step. Both cores are always attempted so one failure
+      # doesn't hide the other result.
       - name: BGR24 decode benchmark (#12)
         shell: bash
         run: |
+          set -euo pipefail
           shopt -s nullglob
+          : "${A76_CPU:?the preflight did not export A76_CPU}"
+          : "${A55_CPU:?the preflight did not export A55_CPU}"
+          mkdir -p board-results
+          BUILD=build-codec
+          BENCH="$BUILD/bin/DecoderTest"
           FLAGS="-DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF"
           echo "codec_test: cmake $FLAGS" >board-results/cmake-flags.txt
-          cmake -S tests/codec_test -B build-codec $FLAGS
-          cmake --build build-codec -j --target DecoderTest
-          for core in "A76:$A76_CPU" "A55:$A55_CPU"; do
-            name=${core%%:*}; cpu=${core#*:}
+          cmake -S tests/codec_test -B "$BUILD" $FLAGS
+          cmake --build "$BUILD" -j --target DecoderTest
+          if [ ! -f "$BENCH" ] || [ ! -x "$BENCH" ]; then
+            echo "::error::Benchmark executable $BENCH is missing or not executable. DecoderTest files under $BUILD: $(find "$BUILD" -name DecoderTest -type f | tr '\n' ' ')"
+            exit 1
+          fi
+          { grep -E '^(CMAKE_BUILD_TYPE|CMAKE_CXX_FLAGS|CMAKE_CXX_COMPILER|PLATFORM|USE_CCACHE_CACHING):' "$BUILD/CMakeCache.txt" || true; } >>board-results/cmake-flags.txt
+          echo "benchmark executable: $BENCH" >>board-results/cmake-flags.txt
+
+          cpu_state() {   # governor, frequency and thermal readings; tolerant of missing sysfs
+            local cpu=$1 d=/sys/devices/system/cpu/cpu$1/cpufreq z
+            echo "cpu$cpu governor=$(cat "$d/scaling_governor" 2>/dev/null || echo n/a) cur=$(cat "$d/scaling_cur_freq" 2>/dev/null || echo n/a) kHz max=$(cat "$d/scaling_max_freq" 2>/dev/null || echo n/a) kHz"
+            for z in /sys/class/thermal/thermal_zone*; do echo "thermal $(cat "$z/type" 2>/dev/null || echo ?) $(cat "$z/temp" 2>/dev/null || echo n/a) m°C"; done
+          }
+
+          failed=0
+          for entry in "A76:$A76_CPU" "A55:$A55_CPU"; do
+            name=${entry%%:*}; cpu=${entry#*:}
+            out="board-results/bgr24-bench-$(echo "$name" | tr A-Z a-z).txt"
             {
-              echo "== $name, CPU $cpu, $(cat /sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_governor) $(cat /sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_cur_freq) kHz"
-              taskset -c "$cpu" ./build-codec/DecoderTest --bgr24-bench
-              for z in /sys/class/thermal/thermal_zone*; do echo "after: $(cat "$z/type") $(cat "$z/temp") m°C"; done
-            } 2>&1 | tee "board-results/bgr24-bench-$(echo "$name" | tr A-Z a-z).txt"
+              echo "== $name, CPU $cpu"
+              echo "commit: $GITHUB_SHA"
+              echo "synthetic input: 1920x1080 BGR24, stride 5760, generated in memory; not the HDMI receiver's current signal (see receiver-signal.txt)"
+              echo "decoder time only, not HDMI-to-LED latency"
+              echo "contention: this board is shared with other runners and services; load average $(cat /proc/loadavg 2>/dev/null || echo n/a); allowed CPUs $(taskset -cp $$ 2>/dev/null || echo n/a)"
+              echo "-- before"
+              cpu_state "$cpu"
+              echo "-- benchmark"
+            } >"$out" 2>&1
+            if awk '{exit !($1 > 1.0)}' /proc/loadavg 2>/dev/null; then
+              echo "::warning::$name: 1-minute load average is above 1.0; treat these numbers as indicative, not a baseline"
+              echo "WARNING: load average above 1.0 before the run; not a baseline" >>"$out"
+            fi
+            status=0
+            taskset -c "$cpu" "$BENCH" --bgr24-bench >>"$out" 2>&1 || status=$?
+            { echo "-- after"; cpu_state "$cpu"; echo "exit status: $status"; } >>"$out" 2>&1
+            cat "$out"
+            if [ "$status" -ne 0 ]; then
+              echo "::error::$name benchmark on CPU $cpu failed with exit status $status"
+              failed=1
+            fi
           done
+          exit "$failed"
 
       - name: Installation and diagnostics checks on the board (#27)
         if: inputs.stage == 'probe'
@@ -136,7 +191,13 @@ jobs:
           ls /dev/video* >/dev/null 2>&1 || echo "::warning::No /dev/video* visible to the runner; pass the devices into its container"
           args=(--out board-results)
           [ "$EXPBUF" = "true" ] && args+=(--expbuf)
-          bash scripts/rk3588/collect-evidence.sh "${args[@]}"
+          bash scripts/rk3588/collect-evidence.sh "${args[@]}" | tee board-results/evidence-summary.txt
+          # Source timing (what the HDMI source sends, queried) and the configured
+          # capture format are different things; keep them apart.
+          {
+            echo "Not interchangeable: the source can send 3840x2160@30 while capture is configured for 1920x1080."
+            sed -n 's/^dv timings: */source timing (VIDIOC_QUERY_DV_TIMINGS): /p; s/^format: */configured capture format (VIDIOC_G_FMT): /p; s/^quantization: */configured quantization: /p; s/^receiver: */receiver node (discovered by driver, never assumed): /p' board-results/evidence-summary.txt
+          } >board-results/receiver-signal.txt
 
       - name: Upload results
         if: always()

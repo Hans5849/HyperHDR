@@ -64,8 +64,8 @@ inline int checkBgr24Decoder()
 // Time the real BGR24 dispatch at the verified mainline layout (1920x1080,
 // stride 5760, one plane) for each range/scale/LUT case. Single-threaded, so
 // pin it to one core to compare A76 and A55 (issue #12):
-//   taskset -c 4 ./DecoderTest --bgr24-bench    # RK3588 A76
-//   taskset -c 0 ./DecoderTest --bgr24-bench    # RK3588 A55
+//   taskset -c 4 build-codec/bin/DecoderTest --bgr24-bench    # RK3588 A76
+//   taskset -c 0 build-codec/bin/DecoderTest --bgr24-bench    # RK3588 A55
 inline int benchBgr24Decoder(int iterations = 200, int warmup = 10)
 {
 	constexpr int width = 1920, height = 1080, stride = 5760;
