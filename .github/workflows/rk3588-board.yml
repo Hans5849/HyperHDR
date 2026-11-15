@@ -93,6 +93,14 @@ jobs:
           cmake --build build-v4l2 -j
           ctest --test-dir build-v4l2 --output-on-failure
 
+      # Independent reference values for the BGR24 conversion (range, channel order,
+      # LUT layout, row tails): Qt-free, so it runs before the heavier suites.
+      - name: BGR24 reference tests (ASan/UBSan, native ARM64)
+        run: |
+          cmake -S tests/bgr24 -B build-bgr24 -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-bgr24 -j
+          ctest --test-dir build-bgr24 --output-on-failure
+
       - name: Command-line parser tests (ASan/UBSan, native ARM64)
         run: |
           cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
@@ -210,4 +218,4 @@ jobs:
       # Keep the board's storage bounded: build trees are recreated every run.
       - name: Clean build trees
         if: always()
-        run: rm -rf build-v4l2 build-cli build-codec build-codec-asan board-results
+        run: rm -rf build-v4l2 build-bgr24 build-cli build-codec build-codec-asan board-results
