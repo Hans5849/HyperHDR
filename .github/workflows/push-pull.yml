@@ -16,9 +16,18 @@ jobs:
 ######################
 
   CaptureTests:
-    name: V4L2 capture and BGR24 decoder tests (ASan/UBSan)
-    runs-on: ubuntu-26.04
+    name: V4L2 capture and BGR24 decoder tests (ASan/UBSan, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-26.04
+          # Same suites natively on ARM64, the RK3588 target architecture.
+          - arch: arm64
+            runner: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -35,7 +44,7 @@ jobs:
 
       - name: BGR24 decoder regression (real FrameDecoder dispatch)
         run: |
-          cmake -S tests/codec_test -B build-codec -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake -S tests/codec_test -B build-codec -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
           cmake --build build-codec -j --target DecoderTest
           ctest --test-dir build-codec --output-on-failure
 
@@ -514,7 +523,8 @@ jobs:
   publish:
     name: Publish Releases
     if: startsWith(github.event.ref, 'refs/tags') && github.event_name != 'pull_request'
-    needs: [Linux, sign-windows, macOS]
+    # Capture/decoder/CLI suites are a release gate, not only a build signal.
+    needs: [CaptureTests, Linux, sign-windows, macOS]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
