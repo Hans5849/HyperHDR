@@ -64,3 +64,14 @@ The mainline review also tests stable driver/bus identity, canonical DV timings,
 no-link/unlocked acquisition failures, timing updates and set failures, the
 verified 1080p60 BGR3 metadata, padded stride and QUERYBUF sizeimage checks.
 See `docs/rk3588-mainline-review.md` for the physical evidence and remaining tests.
+
+`V4L2Supervisor.h` holds the capture lifecycle decisions the grabber used to
+make inline: backoff, the no-signal wait, explicit stop and stale timer/event
+handling. The supervisor tests drive it through a fake host that tracks every
+resource. After each call they check that streaming capture, an armed retry
+timer and the signal wait are never held together, and that `stop()` leaves
+none of them. They cover the #19 cases: no signal at startup with a later signal
+return, signal loss while streaming, the USB backoff and source-change fast
+path, failure categories, stale retries, polls and events after stop or an
+explicit start, a vanished node during the wait, and recovery history across
+explicit and automatic starts.

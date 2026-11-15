@@ -54,6 +54,31 @@
 
 #include <grabber/linux/v4l2/V4L2Grabber.h>
 
+// Lets the Qt-free V4L2Capture::Supervisor drive this grabber's timers,
+// notifiers and capture lifecycle. Every recovery decision lives there.
+struct V4L2Grabber::SupervisorHost final : V4L2Capture::SupervisorHost
+{
+	explicit SupervisorHost(V4L2Grabber& grabber) : g(grabber) {}
+	void startCapture() override { g.startCaptureOnce(); }
+	void stopCapture() override { g.teardownCapture(); }
+	void armRetry(int delayMs) override { g._retryTimer->start(delayMs); }
+	void cancelRetry() override { g._retryTimer->stop(); }
+	bool openSignalWait(const std::string& node) override { return g.openSignalWait(QString::fromStdString(node)); }
+	void closeSignalWait() override { g.closeSignalWait(); }
+	V4L2Capture::SignalStatus probeWaitingSignal() override { return g.probeWaitingSignal(); }
+	std::string activeNode() override { return g._activeNode.toStdString(); }
+	void log(V4L2Capture::LogLevel level, const std::string& message) override
+	{
+		switch (level)
+		{
+			case V4L2Capture::LogLevel::Debug: Debug(g._log, "{:s}", message); break;
+			case V4L2Capture::LogLevel::Info: Info(g._log, "{:s}", message); break;
+			case V4L2Capture::LogLevel::Warning: Warning(g._log, "{:s}", message); break;
+		}
+	}
+	V4L2Grabber& g;
+};
+
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
 
 #ifndef V4L2_CAP_META_CAPTURE
@@ -101,24 +126,16 @@ V4L2Grabber::V4L2Grabber(const QString& device, const QString& configurationPath
 	, _streamNotifier(nullptr)
 
 {
+	_supervisorHost = std::make_unique<SupervisorHost>(*this);
+	_supervisor = std::make_unique<V4L2Capture::Supervisor>(*_supervisorHost);
 	_retryTimer->setSingleShot(true);
-	connect(_retryTimer, &QTimer::timeout, this, [this]() {
-		_retrying = true;
-		start();
-		_retrying = false;
-	});
+	connect(_retryTimer, &QTimer::timeout, this, [this]() { _supervisor->retryTimerFired(); });
 	_signalTimer->setInterval(V4L2Capture::Recovery::signalPollMs);
-	connect(_signalTimer, &QTimer::timeout, this, &V4L2Grabber::checkSignal);
+	connect(_signalTimer, &QTimer::timeout, this, [this]() { _supervisor->signalPollFired(); });
 	_watchdog->setInterval(1000);
 	connect(_watchdog, &QTimer::timeout, this, [this]() {
-		if (!_initialized || InternalClock::now() - _lastFrame <= 5000)
-			return;
-		QString receiver;
-		if (pauseIfNoSignal(receiver))
-			return;
-		restartCapture(V4L2Capture::Failure::Timeout, receiver.isEmpty() ?
-			QString("no frames for five seconds") :
-			QString("no frames for five seconds (receiver: %1)").arg(receiver));
+		if (_initialized && InternalClock::now() - _lastFrame > 5000)
+			_supervisor->stalled(captureSignal());
 	});
 	// Refresh devices
 	getV4L2devices();
@@ -157,7 +174,7 @@ void V4L2Grabber::loadLutFile(PixelFormat color, bool silent)
 
 	// Automatic capture recovery keeps the table that is already in memory
 	// (including one set by calibration). User actions always reload.
-	if (_retrying && _lutBufferInit && _loadedLutFormat == color && _loadedLutHdr == _hdrToneMappingEnabled)
+	if (_supervisor && _supervisor->retrying() && _lutBufferInit && _loadedLutFormat == color && _loadedLutHdr == _hdrToneMappingEnabled)
 		return;
 
 	Grabber::loadLutFile((!silent) ? _log : nullptr, color, QList<QString>{fileName1, fileName2, fileName3});
@@ -713,51 +730,42 @@ bool V4L2Grabber::start()
 {
 	if (_initialized && _buffers.streaming)
 		return true;
-	_retryTimer->stop();
-	stopSignalWait();
-	if (!_retrying)
-		_recovery = {};
-	auto failure = V4L2Capture::Failure::Initialization;
-	QString detail = "no usable capture device or mode";
-	try
-	{
-		resetCounter(InternalClock::now());
-		_generationFrame = _currentFrame;
-		_V4L2WorkerManager.Start();
-		if (init() && _streamNotifier != nullptr)
-		{
-			failure = V4L2Capture::Failure::Streaming;
-			start_capturing();
-			_streamNotifier->setEnabled(true);
-			_lastFrame = InternalClock::now();
-			_watchdog->start();
-			Info(_log, "Started");
-			return true;
-		}
-	}
-	catch (const V4L2Capture::NoSignal& e)
-	{
-		// The receiver reports no input: release everything and wait cheaply
-		// instead of streaming into the five-second timeout.
-		const QString node = _activeNode;
-		stop();
-		waitForSignal(node, QString::fromUtf8(e.what()));
-		return false;
-	}
-	catch (const std::exception& e)
-	{
-		detail = QString::fromUtf8(e.what());
-	}
-	stop();
-	scheduleRetry(failure, detail);
-	return false;
+	return _supervisor->start();
 }
 
+// One start attempt for the supervisor: discovery, init, STREAMON. Throws
+// NoSignal when the receiver reports no input, CaptureError otherwise.
+void V4L2Grabber::startCaptureOnce()
+{
+	resetCounter(InternalClock::now());
+	_generationFrame = _currentFrame;
+	_V4L2WorkerManager.Start();
+	bool ready = false;
+	try { ready = init(); }
+	catch (const V4L2Capture::NoSignal&) { throw; }
+	catch (const std::exception& e) { throw V4L2Capture::CaptureError(V4L2Capture::Failure::Initialization, e.what()); }
+	if (!ready || _streamNotifier == nullptr)
+		throw V4L2Capture::CaptureError(V4L2Capture::Failure::Initialization, "no usable capture device or mode");
+	try { start_capturing(); }
+	catch (const std::exception& e) { throw V4L2Capture::CaptureError(V4L2Capture::Failure::Streaming, e.what()); }
+	_streamNotifier->setEnabled(true);
+	_lastFrame = InternalClock::now();
+	_watchdog->start();
+	Info(_log, "Started");
+}
+
+// Explicit stop: the supervisor cancels retries and the signal wait too.
 void V4L2Grabber::stop()
 {
+	if (_supervisor)
+		_supervisor->stop();
+	else
+		teardownCapture();
+}
+
+void V4L2Grabber::teardownCapture()
+{
 	++_streamEpoch;
-	_retryTimer->stop();
-	stopSignalWait();
 	_watchdog->stop();
 	if (_streamNotifier) _streamNotifier->setEnabled(false);
 	if (_eventNotifier) _eventNotifier->setEnabled(false);
@@ -769,98 +777,43 @@ void V4L2Grabber::stop()
 	_initialized = false;
 }
 
-void V4L2Grabber::restartCapture(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged)
+// Non-streaming handle on the receiver while it reports no input: no buffers,
+// one event subscription, polled every signalPollMs by _signalTimer.
+bool V4L2Grabber::openSignalWait(const QString& node)
 {
-	stop();
-	scheduleRetry(failure, detail, sourceChanged);
-}
-
-void V4L2Grabber::scheduleRetry(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged)
-{
-	const int delay = _recovery.nextDelay(sourceChanged);
-	const std::string message = V4L2Capture::describe(failure, detail.toStdString());
-	// Log once per outage; repeats while the source stays dark go to debug.
-	if (!_recovery.shouldWarn(message))
-		Debug(_log, "{:s}; retry {:d} in {:d} ms", message, _recovery.failures(), delay);
-	else if (failure == V4L2Capture::Failure::SourceChange)
-		Info(_log, "{:s}; restarting capture in {:d} ms", message, delay);
-	else
-		Warning(_log, "{:s}; retrying capture in {:d} ms", message, delay);
-	_retryTimer->start(delay);
-}
-
-bool V4L2Grabber::pauseIfNoSignal(QString& signalDetail)
-{
-	signalDetail.clear();
-	if (_fileDescriptor < 0)
+	closeSignalWait();
+	_signalTimer->start();
+	if (node.isEmpty())
 		return false;
-	const auto status = V4L2Capture::probeSignal(_operations, _fileDescriptor);
-	signalDetail = QString::fromStdString(status.detail);
-	if (status.state != V4L2Capture::Signal::Absent)
+	const QByteArray path = node.toUtf8();
+	_signalFd = _operations.open(path.constData());
+	if (_signalFd < 0)
 		return false;
-	const QString node = _activeNode;
-	stop();
-	waitForSignal(node, signalDetail);
+	v4l2_event_subscription subscription{};
+	subscription.type = V4L2_EVENT_SOURCE_CHANGE;
+	if (_operations.control(_signalFd, VIDIOC_SUBSCRIBE_EVENT, &subscription) == 0)
+	{
+		_signalNotifier = new QSocketNotifier(_signalFd, QSocketNotifier::Exception, this);
+		connect(_signalNotifier, &QSocketNotifier::activated, this, [this]() { _supervisor->signalPollFired(); });
+	}
 	return true;
 }
 
-// Capture is stopped and its buffers released. Keep one non-streaming handle
-// to the receiver, re-probe it every signalPollMs and on source-change events.
-void V4L2Grabber::waitForSignal(const QString& node, const QString& detail)
+V4L2Capture::SignalStatus V4L2Grabber::probeWaitingSignal()
 {
-	const std::string message = V4L2Capture::describe(V4L2Capture::Failure::NoSignal, detail.toStdString());
-	if (_recovery.shouldWarn(message))
-		Info(_log, "{:s} on {:s}; capture paused, checking every {:d} ms", message, node, V4L2Capture::Recovery::signalPollMs);
-	else
-		Debug(_log, "{:s} on {:s}; still waiting", message, node);
-
-	_signalNode = node;
-	if (_signalFd < 0 && !node.isEmpty())
-	{
-		const QByteArray path = node.toUtf8();
-		_signalFd = _operations.open(path.constData());
-		if (_signalFd >= 0)
-		{
-			v4l2_event_subscription subscription{};
-			subscription.type = V4L2_EVENT_SOURCE_CHANGE;
-			if (_operations.control(_signalFd, VIDIOC_SUBSCRIBE_EVENT, &subscription) == 0)
-			{
-				_signalNotifier = new QSocketNotifier(_signalFd, QSocketNotifier::Exception, this);
-				connect(_signalNotifier, &QSocketNotifier::activated, this, &V4L2Grabber::checkSignal);
-			}
-		}
-	}
-	_signalTimer->start();
+	if (_signalFd < 0)
+		return {};
+	v4l2_event event{};
+	while (_operations.control(_signalFd, VIDIOC_DQEVENT, &event) == 0) {}
+	return V4L2Capture::probeSignal(_operations, _signalFd);
 }
 
-void V4L2Grabber::checkSignal()
+V4L2Capture::SignalStatus V4L2Grabber::captureSignal()
 {
-	if (_signalNode.isEmpty())
-		return;
-	if (_signalFd >= 0)
-	{
-		v4l2_event event{};
-		while (_operations.control(_signalFd, VIDIOC_DQEVENT, &event) == 0) {}
-		const auto status = V4L2Capture::probeSignal(_operations, _signalFd);
-		if (status.state == V4L2Capture::Signal::Absent)
-		{
-			waitForSignal(_signalNode, QString::fromStdString(status.detail));
-			return;
-		}
-		Info(_log, "Input signal on {:s}{:s}; starting capture", _signalNode,
-			status.detail.empty() ? std::string() : " (" + status.detail + ")");
-	}
-	else
-		Info(_log, "Cannot reopen {:s} to check its input; rediscovering capture devices", _signalNode);
-
-	// Signal present, state unknown or node gone: full discovery and start.
-	stopSignalWait();
-	_retrying = true;
-	start();
-	_retrying = false;
+	return _fileDescriptor < 0 ? V4L2Capture::SignalStatus{} : V4L2Capture::probeSignal(_operations, _fileDescriptor);
 }
 
-void V4L2Grabber::stopSignalWait()
+void V4L2Grabber::closeSignalWait()
 {
 	_signalTimer->stop();
 	if (_signalNotifier != nullptr)
@@ -874,7 +827,6 @@ void V4L2Grabber::stopSignalWait()
 	if (_signalFd >= 0)
 		_operations.close(_signalFd);
 	_signalFd = -1;
-	_signalNode.clear();
 }
 
 void V4L2Grabber::close_device()
@@ -1004,7 +956,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 	Info(_log, "Capture API: {:s}", _captureType == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ? "multiplanar" : "single-planar");
 
 	// Receivers that report their input (power_present, DV timings) are not
-	// started without one; capture waits in waitForSignal() instead. Devices
+	// started without one; the supervisor pauses in its signal wait instead. Devices
 	// that report neither keep the previous path.
 	const auto inputSignal = V4L2Capture::probeSignal(_operations, _fileDescriptor);
 	if (inputSignal.state == V4L2Capture::Signal::Absent)
@@ -1025,13 +977,7 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			bool changed = false;
 			while (xioctl(VIDIOC_DQEVENT, &event) == 0)
 				changed |= event.type == V4L2_EVENT_SOURCE_CHANGE;
-			QString receiver;
-			if (pauseIfNoSignal(receiver))
-				return;
-			if (changed)
-				restartCapture(V4L2Capture::Failure::SourceChange, receiver.isEmpty() ? QString("input timing or format changed") : receiver, true);
-			else
-				restartCapture(V4L2Capture::Failure::Streaming, "source event notification without a readable event");
+			_supervisor->sourceEvent(changed, captureSignal());
 		});
 	}
 
@@ -1316,13 +1262,12 @@ int V4L2Grabber::read_frame()
 			// Drop isolated short frames (common around timing changes); only a
 			// run of them means the negotiated format no longer matches.
 			++frameStat.badFrame;
-			if (_recovery.shortFrame())
+			if (_supervisor->shortFrame())
 				throw std::runtime_error("streaming: repeated BGR24 payloads shorter than negotiated dimensions/stride");
 			_buffers.queue(index);
 			return 0;
 		}
-		if (const unsigned failures = _recovery.frameReceived())
-			Info(_log, "Capture recovered after {:d} failed attempt(s)", failures);
+		_supervisor->frameReceived();
 		_lastFrame = InternalClock::now();
 		// Worker copies only the buffer identity. No stack plane array escapes.
 		d.buffer.m.planes = nullptr;
@@ -1332,7 +1277,7 @@ int V4L2Grabber::read_frame()
 	}
 	catch (const std::exception& e)
 	{
-		restartCapture(V4L2Capture::Failure::Streaming, QString::fromUtf8(e.what()));
+		_supervisor->streamFailed(e.what());
 	}
 	return 0;
 }
@@ -1454,14 +1399,14 @@ void V4L2Grabber::returnBuffer(unsigned int workerIndex, quint64 sourceCount)
 	if (!_initialized || sourceCount < _generationFrame) return;
 	if (workerIndex >= _V4L2WorkerManager.workers.size())
 	{
-		restartCapture(V4L2Capture::Failure::Streaming, "invalid worker index");
+		_supervisor->streamFailed("invalid worker index");
 		return;
 	}
 	auto& worker = _V4L2WorkerManager.workers[workerIndex];
 	const auto index = worker->GetV4L2Buffer()->index;
 	worker->noBusy();
 	try { _buffers.queue(index); }
-	catch (const std::exception& e) { restartCapture(V4L2Capture::Failure::Streaming, QString::fromUtf8(e.what())); }
+	catch (const std::exception& e) { _supervisor->streamFailed(e.what()); }
 }
 
 void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString error, quint64 sourceCount)

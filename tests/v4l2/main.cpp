@@ -1,4 +1,5 @@
 #include <grabber/linux/v4l2/V4L2Capture.h>
+#include <grabber/linux/v4l2/V4L2Supervisor.h>
 #include <utils/Bgr24.h>
 #include <functional>
 #include <iostream>
@@ -221,6 +222,76 @@ std::vector<std::pair<std::string, Node>> discover(SimSystem& sys)
 	}
 	return found;
 }
+
+// Records what the supervisor asks for and checks resource ownership after
+// every call: capture, retry timer and signal wait are never held together,
+// and nothing is held after stop().
+struct FakeHost : SupervisorHost
+{
+	enum class Next { Ok, NoSignal, InitFail, StreamFail, Generic };
+	std::vector<Next> script;            // results of successive startCapture calls
+	Supervisor* sup = nullptr;
+	bool capture = false, waitOpen = false, polling = false;
+	int retryMs = -1;                    // -1 = no retry armed
+	bool nodeOpens = true;
+	std::string node = "/dev/video1";
+	SignalStatus waiting{ Signal::Absent, "no source detected (power_present=0)" };
+	unsigned starts = 0, stops = 0, opens = 0, probes = 0;
+	std::vector<bool> retryingDuringStart;
+	std::vector<std::pair<LogLevel, std::string>> logs;
+
+	void invariant() const
+	{
+		REQUIRE(int(capture) + int(retryMs >= 0) + int(polling) <= 1);
+		REQUIRE(!waitOpen || polling);
+	}
+	void startCapture() override
+	{
+		REQUIRE(!capture && !polling && retryMs < 0);   // clean slate before every start
+		++starts;
+		retryingDuringStart.push_back(sup->retrying());
+		const Next n = script.empty() ? Next::Ok : script.front();
+		if (!script.empty()) script.erase(script.begin());
+		capture = true;                  // partially acquired before failing
+		switch (n)
+		{
+			case Next::Ok: return;
+			case Next::NoSignal: throw NoSignal("no source detected (power_present=0)");
+			case Next::InitFail: throw CaptureError(Failure::Initialization, "format negotiation: VIDIOC_S_FMT: Device or resource busy");
+			case Next::StreamFail: throw CaptureError(Failure::Streaming, "streaming: VIDIOC_STREAMON: Input/output error");
+			case Next::Generic: throw std::runtime_error("buffer setup: mmap: Cannot allocate memory");
+		}
+	}
+	void stopCapture() override { ++stops; capture = false; }
+	void armRetry(int ms) override { REQUIRE(ms > 0); retryMs = ms; }
+	void cancelRetry() override { retryMs = -1; }
+	bool openSignalWait(const std::string& n) override
+	{
+		REQUIRE(!capture && retryMs < 0 && !polling);
+		++opens; polling = true;
+		waitOpen = nodeOpens && !n.empty();
+		return waitOpen;
+	}
+	void closeSignalWait() override { waitOpen = false; polling = false; }
+	SignalStatus probeWaitingSignal() override { REQUIRE(waitOpen); ++probes; return waiting; }
+	std::string activeNode() override { return node; }
+	void log(LogLevel level, const std::string& m) override { logs.push_back({ level, m }); }
+
+	unsigned count(LogLevel level, const std::string& needle) const
+	{
+		unsigned n = 0;
+		for (const auto& l : logs) n += l.first == level && l.second.find(needle) != std::string::npos;
+		return n;
+	}
+};
+
+struct Rig
+{
+	FakeHost host;
+	Supervisor sup{ host };
+	Rig() { host.sup = &sup; }
+	template<typename F> void step(F&& f) { f(); host.invariant(); }
+};
 
 int main()
 {
@@ -565,6 +636,116 @@ int main()
 		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_FULL_RANGE, RgbRange::Limited).find("quantization is full") != std::string::npos);
 		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_LIM_RANGE, RgbRange::Full).find("clip") != std::string::npos);
 		sys.close(rx); sys.close(usb);
+	});
+	test("supervisor: no signal at start waits on an event handle, then starts", [] {
+		Rig r; r.host.script = { FakeHost::Next::NoSignal };
+		r.step([&] { REQUIRE(!r.sup.start()); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal);
+		REQUIRE(r.host.waitOpen && !r.host.capture && r.host.retryMs < 0 && r.host.opens == 1);
+		REQUIRE(r.host.count(LogLevel::Info, "no signal: no source detected (power_present=0) on /dev/video1; capture paused") == 1);
+		// Many polls while dark: one Info line, no start, no retry timer, no reopen.
+		for (int i = 0; i < 50; ++i) r.step([&] { r.sup.signalPollFired(); });
+		REQUIRE(r.host.starts == 1 && r.host.probes == 50 && r.host.opens == 1);
+		REQUIRE(r.host.count(LogLevel::Info, "no signal:") == 1);
+		// Signal returns: the very next poll or event starts capture as a recovery.
+		r.host.waiting = { Signal::Present, "detected 1920x1080p" };
+		r.step([&] { r.sup.signalPollFired(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.host.capture && !r.host.polling);
+		REQUIRE(r.host.starts == 2 && r.host.retryingDuringStart == (std::vector<bool>{ false, true }));
+		REQUIRE(r.host.count(LogLevel::Info, "Input signal on /dev/video1 (detected 1920x1080p); starting capture") == 1);
+		REQUIRE(!r.sup.retrying());
+	});
+	test("supervisor: signal lost while streaming pauses instead of timing out", [] {
+		Rig r;
+		r.step([&] { REQUIRE(r.sup.start()); });
+		r.step([&] { r.sup.stalled({ Signal::Absent, "no signal (QUERY_DV_TIMINGS: ENOLINK)" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.retryMs < 0 && r.host.stops >= 1);
+		REQUIRE(r.host.count(LogLevel::Warning, "timeout") == 0);
+		// Same through the source-change event on the streaming fd.
+		Rig e;
+		e.step([&] { e.sup.start(); });
+		e.step([&] { e.sup.sourceEvent(true, { Signal::Absent, "no source detected (power_present=0)" }); });
+		REQUIRE(e.sup.state() == Supervisor::State::WaitingForSignal);
+	});
+	test("supervisor: USB-style failures keep the capped backoff and fast source change", [] {
+		Rig r;
+		r.host.script = { FakeHost::Next::StreamFail, FakeHost::Next::StreamFail, FakeHost::Next::StreamFail,
+			FakeHost::Next::StreamFail, FakeHost::Next::StreamFail, FakeHost::Next::StreamFail };
+		std::vector<int> delays;
+		r.step([&] { r.sup.start(); }); delays.push_back(r.host.retryMs);
+		for (int i = 0; i < 5; ++i) { r.step([&] { r.sup.retryTimerFired(); }); delays.push_back(r.host.retryMs); }
+		REQUIRE(delays == (std::vector<int>{ 3000, 6000, 12000, 24000, 30000, 30000 }));
+		REQUIRE(r.host.count(LogLevel::Warning, "streaming failed: VIDIOC_STREAMON") == 1);
+		REQUIRE(r.host.retryingDuringStart.front() == false && r.host.retryingDuringStart.back() == true);
+		REQUIRE(r.host.opens == 0);    // never enters the signal wait without a reported absence
+		r.step([&] { r.sup.retryTimerFired(); });   // script exhausted: succeeds
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming);
+		r.step([&] { r.sup.frameReceived(); });
+		REQUIRE(r.host.count(LogLevel::Info, "Capture recovered after 6 failed attempt(s)") == 1);
+		r.step([&] { r.sup.sourceEvent(true, {}); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == Recovery::sourceChangeDelayMs);
+		REQUIRE(r.host.count(LogLevel::Info, "source changed: input timing or format changed; restarting capture in 500 ms") == 1);
+	});
+	test("supervisor: failure categories from start and streaming", [] {
+		Rig r; r.host.script = { FakeHost::Next::InitFail, FakeHost::Next::Generic };
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.host.count(LogLevel::Warning, "initialization failed: format negotiation") == 1);
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.host.count(LogLevel::Warning, "initialization failed: buffer setup: mmap") == 1);
+		r.step([&] { r.sup.retryTimerFired(); });
+		r.step([&] { r.sup.stalled({ Signal::Present, "detected 1920x1080p" }); });
+		REQUIRE(r.host.count(LogLevel::Warning, "timeout: no frames for five seconds (receiver: detected 1920x1080p)") == 1);
+		r.step([&] { r.sup.retryTimerFired(); });
+		r.step([&] { r.sup.streamFailed("streaming: VIDIOC_DQBUF: Input/output error"); });
+		REQUIRE(r.host.count(LogLevel::Warning, "streaming failed: VIDIOC_DQBUF") == 1);
+		r.step([&] { r.sup.retryTimerFired(); });
+		r.step([&] { r.sup.sourceEvent(false, {}); });
+		REQUIRE(r.host.count(LogLevel::Warning, "source event notification without a readable event") == 1);
+	});
+	test("supervisor: explicit stop cancels everything; stale events are ignored", [] {
+		for (auto entry : { FakeHost::Next::Ok, FakeHost::Next::NoSignal, FakeHost::Next::StreamFail })
+		{
+			Rig r; r.host.script = { entry };
+			r.step([&] { r.sup.start(); });
+			r.step([&] { r.sup.stop(); });
+			REQUIRE(r.sup.state() == Supervisor::State::Stopped);
+			REQUIRE(!r.host.capture && !r.host.polling && !r.host.waitOpen && r.host.retryMs < 0);
+			const unsigned starts = r.host.starts, probes = r.host.probes;
+			r.step([&] { r.sup.retryTimerFired(); r.sup.signalPollFired(); r.sup.stalled({ Signal::Absent, "x" });
+				r.sup.sourceEvent(true, {}); r.sup.streamFailed("late worker"); });
+			REQUIRE(r.host.starts == starts && r.host.probes == probes && r.sup.state() == Supervisor::State::Stopped);
+			REQUIRE(!r.host.capture && !r.host.polling && r.host.retryMs < 0);
+		}
+		// A late retry or poll after a successful explicit start does nothing.
+		Rig r; r.host.script = { FakeHost::Next::StreamFail };
+		r.step([&] { r.sup.start(); });
+		r.step([&] { r.sup.start(); });          // explicit start wins over the pending retry
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.host.retryMs < 0);
+		r.step([&] { r.sup.retryTimerFired(); r.sup.signalPollFired(); });
+		REQUIRE(r.host.starts == 2);
+		REQUIRE(r.sup.start() && r.host.starts == 2);   // already streaming
+	});
+	test("supervisor: vanished node during the wait falls back to discovery", [] {
+		Rig r; r.host.script = { FakeHost::Next::NoSignal, FakeHost::Next::NoSignal };
+		r.host.nodeOpens = false;
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.polling && !r.host.waitOpen);
+		r.step([&] { r.sup.signalPollFired(); });   // no handle: rediscover instead of probing
+		REQUIRE(r.host.probes == 0 && r.host.starts == 2);
+		REQUIRE(r.host.count(LogLevel::Info, "Cannot reopen /dev/video1") == 1);
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal);   // still dark
+		r.host.nodeOpens = true; r.host.node.clear();
+		r.step([&] { r.sup.stop(); r.host.script = { FakeHost::Next::NoSignal }; r.sup.start(); });
+		REQUIRE(r.host.polling && !r.host.waitOpen);    // empty node: poll only
+	});
+	test("supervisor: explicit start forgets history; recovery start keeps it", [] {
+		Rig r; r.host.script = { FakeHost::Next::StreamFail, FakeHost::Next::StreamFail, FakeHost::Next::StreamFail };
+		r.step([&] { r.sup.start(); });
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.host.retryMs == 6000 && r.sup.recovery().failures() == 2);
+		r.step([&] { r.sup.start(); });          // user re-enable: backoff restarts at 3 s
+		REQUIRE(r.host.retryMs == 3000 && r.sup.recovery().failures() == 1);
+		REQUIRE(r.host.count(LogLevel::Warning, "streaming failed") == 2);   // warned again after the reset
 	});
 	std::cout << passed << " test groups passed\n";
 }

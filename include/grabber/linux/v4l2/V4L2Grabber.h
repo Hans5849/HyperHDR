@@ -5,6 +5,8 @@
 #endif
 
 #include <grabber/linux/v4l2/V4L2Capture.h>
+#include <grabber/linux/v4l2/V4L2Supervisor.h>
+#include <memory>
 #include <utils/PixelFormat.h>
 #include <base/Grabber.h>
 #include <grabber/GrabberWorker.h>
@@ -70,13 +72,14 @@ private:
 
 	void start_capturing();
 
-	void restartCapture(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged = false);
-	void scheduleRetry(V4L2Capture::Failure failure, const QString& detail, bool sourceChanged = false);
-	// No-signal handling for receivers that report their input state.
-	bool pauseIfNoSignal(QString& signalDetail);
-	void waitForSignal(const QString& node, const QString& detail);
-	void checkSignal();
-	void stopSignalWait();
+	// Capture lifecycle primitives, sequenced by V4L2Capture::Supervisor.
+	struct SupervisorHost;
+	void startCaptureOnce();
+	void teardownCapture();
+	bool openSignalWait(const QString& node);
+	void closeSignalWait();
+	V4L2Capture::SignalStatus probeWaitingSignal();
+	V4L2Capture::SignalStatus captureSignal();
 	void returnBuffer(unsigned int workerIndex, quint64 sourceCount);
 
 	bool process_image(v4l2_buffer* buf, const void* frameImageBuffer, int size);
@@ -110,16 +113,14 @@ private:
 	QTimer* _signalTimer;
 	QSocketNotifier* _signalNotifier = nullptr;
 	int _signalFd = -1;
-	QString _signalNode;
 	QString _activeNode;
 	QSocketNotifier* _eventNotifier = nullptr;
 	qint64 _lastFrame = 0;
 	quint64 _generationFrame = 0;
 	quint64 _streamEpoch = 0;
-	V4L2Capture::Recovery _recovery;
-	// Set while the retry timer restarts capture after a failure. Automatic
-	// recovery reuses the LUT already in memory instead of reloading ~50 MB.
-	bool _retrying = false;
+	// Declared in this order so the supervisor is destroyed before its host.
+	std::unique_ptr<SupervisorHost> _supervisorHost;
+	std::unique_ptr<V4L2Capture::Supervisor> _supervisor;
 	PixelFormat _loadedLutFormat = PixelFormat::NO_CHANGE;
 	int _loadedLutHdr = -1;
 	QSocketNotifier*	_streamNotifier;	
