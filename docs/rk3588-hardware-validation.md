@@ -247,7 +247,10 @@ Repeat 6 with a USB grabber to confirm the single-planar path is unchanged.
 
 ## Collect evidence and troubleshoot
 
-Run the evidence collector on the board at the start and end of every session,
+Start with `scripts/diagnostics/hyperhdr-doctor.sh` ([diagnostics](diagnostics.md)).
+It checks the package, service, user data, ports, groups and receiver state, and
+gives a fix for each problem. Then run the evidence collector on the board at the
+start and end of every session,
 and attach its archive to the relevant issue (#8, #10, #11, #13):
 
 ```sh
