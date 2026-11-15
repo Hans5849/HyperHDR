@@ -34,7 +34,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev libturbojpeg0-dev python3
+          sudo apt-get install -y --no-install-recommends cmake g++ qt6-base-dev libturbojpeg0-dev python3 python3-yaml
 
       - name: V4L2 capture tests (no hardware, injected syscalls)
         run: |
@@ -62,6 +62,11 @@ jobs:
 
       - name: Installation and diagnostics checks (stubbed systems, read-only)
         run: bash tests/diagnostics/doctor-test.sh
+
+      - name: Board runner preflight and workflow trust policy
+        run: |
+          bash tests/rk3588/board-preflight-test.sh
+          python3 tests/ci/board-workflow-policy-test.py
 
 ######################
 ###### Linux #########

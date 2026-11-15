@@ -37,6 +37,38 @@ Follow-up changes:
 
 See `rk3588-hardware-validation.md` for the operator procedure and pending checks.
 
+## 2026-11-15 manual Cortex-A76 decoder timings (not a baseline)
+
+Measured by hand on the Orange Pi 5 Plus (Armbian, Debian 13, kernel 6.18.44) on
+CPU 4 (Cortex-A76) with `taskset -c 4 build-codec/bin/DecoderTest --bgr24-bench`:
+1920x1080 BGR24, 200 timed runs per row. Decoder time only, not HDMI-to-LED
+latency, and the input is the benchmark's synthetic frame, not the receiver's
+current signal.
+
+| Range | Output | LUT | Median | P95 |
+|---|---|---|---:|---:|
+| Full | Full | No | 0.618 ms | 0.684 ms |
+| Full | Full | Yes | 52.894 ms | 67.396 ms |
+| Full | Quarter | No | 0.842 ms | 0.886 ms |
+| Full | Quarter | Yes | 13.353 ms | 16.855 ms |
+| Limited | Full | No | 4.932 ms | 5.034 ms |
+| Limited | Full | Yes | 63.081 ms | 79.167 ms |
+| Limited | Quarter | No | 1.314 ms | 1.370 ms |
+| Limited | Quarter | Yes | 16.182 ms | 18.376 ms |
+
+What they show: LUT decoding costs one to two orders of magnitude more than
+non-LUT decoding at this size. What they don't establish: a reproducible
+baseline. The board is shared with another runner, load average, governor and
+temperature weren't recorded for these runs, and there is no Cortex-A55 result
+yet. The `RK3588 board checks` workflow now records both cores with that context
+(`bgr24-bench-a76.txt`, `bgr24-bench-a55.txt`); the A55 result is still to be
+captured from an Actions run on the board.
+
+The first workflow run on the board built the application but failed the
+benchmark with exit status 127: it ran `./build-codec/DecoderTest`, while CMake
+writes the executable to `build-codec/bin/DecoderTest`. Fixed in PR #30 and
+guarded by `tests/ci/board-workflow-policy-test.py`.
+
 ## Original implementation (2026-11-04)
 
 No merge, upstream PR, release workflow change, release or physical-board action
