@@ -42,6 +42,12 @@ jobs:
           cmake --build build-v4l2 -j
           ctest --test-dir build-v4l2 --output-on-failure
 
+      - name: BGR24 reference tests (independent expected values, no Qt)
+        run: |
+          cmake -S tests/bgr24 -B build-bgr24 -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-bgr24 -j
+          ctest --test-dir build-bgr24 --output-on-failure
+
       - name: BGR24 decoder regression (real FrameDecoder dispatch)
         run: |
           cmake -S tests/codec_test -B build-codec -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
