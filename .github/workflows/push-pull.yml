@@ -73,6 +73,7 @@ jobs:
         run: |
           bash tests/rk3588/board-preflight-test.sh
           python3 tests/ci/board-workflow-policy-test.py
+          python3 tests/ci/cache-cleaner-policy-test.py
 
 ######################
 ###### Linux #########

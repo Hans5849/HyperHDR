@@ -1,26 +1,41 @@
 name: Cache clearing action after closing PR
 run-name: Cache clearing
 
+# Runs on the base repository's pull_request event (not pull_request_target),
+# checks out nothing and runs no pull-request code.
 on:
   pull_request:
     types:
       - closed
+
+# Nothing by default; each job asks for exactly what it uses.
+permissions: {}
 
 jobs:
   clean_PR_ccache:
     name: Delete old CCache files
     runs-on: ubuntu-latest
     permissions:
-      actions: write
+      actions: write      # gh cache delete
     steps:
       - run: gh cache delete --all --ref "refs/pull/${{ github.event.pull_request.number }}/merge" --repo ${{ github.repository }} || true
         env:
           GH_TOKEN: ${{ github.token }}
+
   clean_PR_artifacts:
     name: Delete old Artifacts
     runs-on: ubuntu-latest
+    # Same-repository PRs only. A fork PR's token is read-only whatever is
+    # requested here (the deletion would fail with HTTP 403), and the action
+    # looks runs up by the head branch *name* in this repository, so a fork
+    # branch named like one of ours must not select our runs.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      actions: write      # list workflow runs and DELETE /actions/artifacts/{id}
     steps:
-      - uses: stefanluptak/delete-old-pr-artifacts@v1
+      # Pinned to the commit behind v1 (composite action: gh api list + delete
+      # only); it holds a write token, so a moved tag must not change it.
+      - uses: stefanluptak/delete-old-pr-artifacts@253bfc09f87d1a6f2814734989d65d8cb67d80a4 # v1
         with:
           workflow_filename: push-pull.yml
           debug: true
