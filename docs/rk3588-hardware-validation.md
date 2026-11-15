@@ -292,33 +292,27 @@ result is kernel-level evidence only, not HyperHDR preview or WLED evidence.
 
 ## Self-hosted board runner
 
-`.github/workflows/rk3588-board.yml` runs on a self-hosted RK3588 runner. Start it
-from **Actions → RK3588 board checks → Run workflow**. Only users with write
-access can do that; the workflow has no pull-request triggers, so fork code never
-runs on the board. It has two stages:
+`.github/workflows/rk3588-board.yml` runs on a dedicated, repository-scoped runner
+on the Orange Pi 5 Plus. It has labels `self-hosted, Linux, ARM64, rk3588,
+orange-pi-5-plus, hyperhdr-hil`, runs from `master` only, and goes through the
+`rk3588-hil` environment.
 
-- **`tests`:**
-  - the V4L2, CLI and BGR24 decoder suites, natively on ARM64 with ASan/UBSan
-  - the evidence-collector test
-  - `DecoderTest --bgr24-bench` (1920x1080, stride 5760, every range/scale/LUT case), pinned to CPU 4 (A76) and CPU 0 (A55)
-- **`probe`:** everything in `tests`, plus `scripts/rk3588/collect-evidence.sh`. The `expbuf` input adds the EXPBUF probe, which opens the receiver; make sure HyperHDR isn't capturing on that board.
+Start it from **Actions → RK3588 board checks → Run workflow**. Each run begins
+with `scripts/rk3588/board-preflight.sh`, which fails the run unless all of these
+hold:
+- the board is an Orange Pi 5 Plus with 4x A55 + 4x A76
+- the runner isn't root and has no passwordless sudo
+- for `probe`, the receiver is accessible
+- for EXPBUF, no HyperHDR is running
 
-Results, including the environment, the benchmark table and any evidence archive,
-are uploaded as an artifact for 30 days.
+Stages:
+- **`tests`:** sanitizer suites natively on ARM64, and the BGR24 benchmark on the
+  A76 and A55 cores.
+- **`probe`:** also the diagnostics doctor (#27) and the evidence collector, plus
+  the optional EXPBUF probe.
 
-Runner setup (once per board):
-1. Register a runner **for this repository**, not shared with other projects'
-   untrusted workflows, with the labels `self-hosted, linux, ARM64, rk3588`.
-2. Install the build dependencies the workflow checks for: `build-essential cmake
-   pkg-config qt6-base-dev libturbojpeg0-dev`. The workflow never uses `sudo`.
-3. For `probe`: give the runner `/dev/video*` and `/dev/v4l` (for a container,
-   for example `--device /dev/video1 -v /dev/v4l:/dev/v4l:ro --group-add video`)
-   and `v4l-utils`. Only a board whose HDMI input is connected to a source can
-   produce signal-present results; without one, the probe records the no-signal
-   state.
-
-The benchmark is CPU decode only. LUT, LED extraction, smoothing and DDP still
-need the stage counters planned for #9.
+Provisioning, trust boundaries, the disruption policy and runner removal are in
+[rk3588-board-runner.md](rk3588-board-runner.md).
 
 ## Roll back
 
