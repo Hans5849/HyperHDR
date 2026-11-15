@@ -258,6 +258,36 @@ contain network credentials.
 - Correct preview but wrong LEDs: check WLED realtime state, address, LED count,
   channel order and UDP 4048 routing separately.
 
+## Self-hosted board runner
+
+`.github/workflows/rk3588-board.yml` runs on a self-hosted RK3588 runner. Start it
+from **Actions → RK3588 board checks → Run workflow**. Only users with write
+access can do that; the workflow has no pull-request triggers, so fork code never
+runs on the board. It has two stages:
+
+- **`tests`:**
+  - the V4L2, CLI and BGR24 decoder suites, natively on ARM64 with ASan/UBSan
+  - the evidence-collector test
+  - `DecoderTest --bgr24-bench` (1920x1080, stride 5760, every range/scale/LUT case), pinned to CPU 4 (A76) and CPU 0 (A55)
+- **`probe`:** everything in `tests`, plus `scripts/rk3588/collect-evidence.sh`. The `expbuf` input adds the EXPBUF probe, which opens the receiver; make sure HyperHDR isn't capturing on that board.
+
+Results, including the environment, the benchmark table and any evidence archive,
+are uploaded as an artifact for 30 days.
+
+Runner setup (once per board):
+1. Register a runner **for this repository**, not shared with other projects'
+   untrusted workflows, with the labels `self-hosted, linux, ARM64, rk3588`.
+2. Install the build dependencies the workflow checks for: `build-essential cmake
+   pkg-config qt6-base-dev libturbojpeg0-dev`. The workflow never uses `sudo`.
+3. For `probe`: give the runner `/dev/video*` and `/dev/v4l` (for a container,
+   for example `--device /dev/video1 -v /dev/v4l:/dev/v4l:ro --group-add video`)
+   and `v4l-utils`. Only a board whose HDMI input is connected to a source can
+   produce signal-present results; without one, the probe records the no-signal
+   state.
+
+The benchmark is CPU decode only. LUT, LED extraction, smoothing and DDP still
+need the stage counters planned for #9.
+
 ## Roll back
 
 Stop the service. Install the saved official arm64 package with

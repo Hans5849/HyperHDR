@@ -1,0 +1,119 @@
+# Checks on self-hosted RK3588 boards (issues #18, #12, #11, #8).
+#
+# Manual dispatch only. Only users with write access can start it, so
+# pull-request or fork code never runs on these boards. Do not add
+# pull_request or pull_request_target triggers.
+#
+# Runner prerequisites (see docs/rk3588-hardware-validation.md, "Self-hosted
+# board runner"):
+#   - registered to this repository with labels: self-hosted, linux, ARM64, rk3588
+#   - build tools and Qt 6 dev packages installed (no sudo is used here)
+#   - for the probe stage: /dev/video* and /dev/v4l passed into the runner and
+#     membership of the video group
+name: RK3588 board checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "tests = hardware-free suites + BGR24 benchmark; probe = also run the read-only evidence collector"
+        type: choice
+        options: [tests, probe]
+        default: tests
+      expbuf:
+        description: "probe stage: also run the EXPBUF probe (opens the receiver; HyperHDR must not be capturing on the board)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rk3588-board-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  board:
+    name: RK3588 board (${{ inputs.stage }})
+    if: github.repository == 'Hans5849/HyperHDR'
+    runs-on: [self-hosted, linux, ARM64, rk3588]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Board and toolchain
+        shell: bash
+        run: |
+          shopt -s nullglob
+          mkdir -p board-results
+          {
+            echo "commit: $GITHUB_SHA"
+            echo "model: $(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo unknown)"
+            uname -a
+            grep -E '^(PRETTY_NAME|VERSION)=' /etc/os-release
+            [ -r /etc/armbian-release ] && grep -E '^(BOARD|VERSION)=' /etc/armbian-release
+            for p in /sys/devices/system/cpu/cpufreq/policy*; do
+              echo "$(basename "$p") cpus=$(cat "$p/related_cpus") governor=$(cat "$p/scaling_governor") cur=$(cat "$p/scaling_cur_freq") max=$(cat "$p/scaling_max_freq")"
+            done
+            for z in /sys/class/thermal/thermal_zone*; do echo "$(cat "$z/type") $(cat "$z/temp") m°C"; done
+            cmake --version | head -1; g++ --version | head -1
+          } 2>&1 | tee board-results/environment.txt
+          missing=""
+          for tool in cmake g++ pkg-config; do command -v $tool >/dev/null || missing="$missing $tool"; done
+          pkg-config --exists Qt6Core 2>/dev/null || [ -n "$(ls /usr/lib/*/cmake/Qt6Core/Qt6CoreConfig.cmake 2>/dev/null)" ] || missing="$missing qt6-base-dev"
+          if [ -n "$missing" ]; then
+            echo "::error::Runner is missing:$missing (install build-essential cmake pkg-config qt6-base-dev libturbojpeg0-dev)"
+            exit 1
+          fi
+
+      - name: V4L2 capture tests (ASan/UBSan, native ARM64)
+        run: |
+          cmake -S tests/v4l2 -B build-v4l2 -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-v4l2 -j
+          ctest --test-dir build-v4l2 --output-on-failure
+
+      - name: Command-line parser tests (ASan/UBSan, native ARM64)
+        run: |
+          cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-cli -j
+          ctest --test-dir build-cli --output-on-failure
+
+      - name: BGR24 decoder check (ASan/UBSan) and evidence-collector test
+        run: |
+          cmake -S tests/codec_test -B build-codec-asan -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-codec-asan -j --target DecoderTest
+          ctest --test-dir build-codec-asan --output-on-failure
+          bash tests/rk3588/collect-evidence-test.sh
+
+      # Release build without sanitizers; one pinned core per cluster. On
+      # RK3588, CPUs 0-3 are Cortex-A55 and 4-7 Cortex-A76 (see environment.txt).
+      - name: BGR24 decode benchmark (#12)
+        shell: bash
+        run: |
+          cmake -S tests/codec_test -B build-codec -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF
+          cmake --build build-codec -j --target DecoderTest
+          for cpu in 4 0; do
+            echo "== CPU $cpu ($(cat /sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_cur_freq 2>/dev/null) kHz)"
+            taskset -c $cpu ./build-codec/DecoderTest --bgr24-bench
+          done 2>&1 | tee board-results/bgr24-bench.txt
+          shopt -s nullglob
+          for z in /sys/class/thermal/thermal_zone*; do echo "after: $(cat "$z/type") $(cat "$z/temp") m°C"; done | tee -a board-results/bgr24-bench.txt
+
+      - name: Read-only evidence collector (#8, #10, #13)
+        if: inputs.stage == 'probe'
+        shell: bash
+        env:
+          EXPBUF: ${{ inputs.expbuf }}
+        run: |
+          ls /dev/video* >/dev/null 2>&1 || echo "::warning::No /dev/video* visible to the runner; pass the devices into its container"
+          args=(--out board-results)
+          [ "$EXPBUF" = "true" ] && args+=(--expbuf)
+          bash scripts/rk3588/collect-evidence.sh "${args[@]}"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: rk3588-board-${{ inputs.stage }}-${{ github.run_number }}
+          path: board-results/
+          retention-days: 30
