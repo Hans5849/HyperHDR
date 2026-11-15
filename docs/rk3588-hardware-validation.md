@@ -11,12 +11,16 @@ connected HDMI source.
 | --- | --- | --- |
 | Native build on Debian 13 ARM64 | Confirmed | Operator build of `cca3898`: GCC 14.2.0, CMake 3.31.6, Qt 6.8.2, Ninja, `ENABLE_V4L2=ON` |
 | Local `.deb` install through APT | Confirmed | All dependencies resolved; `hyperhdr@ryan.service` enabled and active |
-| Hardware-free regression tests on the board | Confirmed | V4L2 capture test and BGR24 decoder test passed |
+| Hardware-free regression tests on the board | Confirmed | V4L2 capture test and BGR24 decoder test passed (2026-11-09). The `RK3588 board checks` workflow also passed every sanitizer suite natively on 2026-11-15, but its benchmark step failed on the executable path, which is now fixed; it needs a rerun ([run](https://github.com/Hans5849/HyperHDR/actions/runs/43716032809)) |
 | Kernel-level capture (`v4l2-ctl`, outside HyperHDR) | Confirmed earlier | Armbian 26.8.3: HDMI output-to-input loopback, 120 BGR3 1080p frames, ~16.67 ms intervals, no gaps or buffer errors ([mainline review](rk3588-mainline-review.md)) |
 | Receiver discovery in HyperHDR | Confirmed | `snps_hdmirx` found at `/dev/video1` (seen earlier as `/dev/video2` and `/dev/video5`); Rockchip non-capture nodes rejected; receiver initialized |
 | No-source behaviour at `cca3898` | Confirmed | Streaming started, no frames, five-second timeout, delayed retries |
 | No-source behaviour after this update (paused wait, see below) | Not yet run on the board | Covered by simulated tests and CI only |
 | HDMI frames, image correctness, preview, WLED/DDP output, CPU/RSS | **Not validated** | No HDMI source has been connected yet |
+
+Compilation and hosted CI are not hardware validation. For what *captured*,
+*accepted*, *decoded* and *LED output* each mean, see
+[frame stages](rk3588-frame-stages.md).
 
 The loopback run proves the kernel driver delivers frames. It does not prove
 HyperHDR's image contents, preview, colours or recovery. Nothing in this guide

@@ -1,9 +1,29 @@
 # RK3588 native HDMI development results
 
 Development date: 2026-11-04. Base: b1451f2868072c5b8eda0ae61c0fcf33ecc1bfc5
-in Hans5849/HyperHDR. Original branch: `feature/rk3588-hdmirx`, since merged to
-`master` through PR #1 and deleted. Follow-up work continues on
-`claude/great-heisenberg-bgp44k`.
+in Hans5849/HyperHDR. Original branch: `feature/rk3588-hdmirx`, merged to
+`master` through PR #1. Later work lands on `master` through pull requests.
+
+The sections below are dated. The newest status is first; older sections are kept
+as history, and statements they make that are no longer true are marked
+superseded.
+
+## Current status (2026-11-15)
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Original implementation | **Merged** (PR #1, 2026-11-04) | |
+| ARM64 packages | **Produced by hosted CI** for Debian Bookworm and Trixie, and also Bullseye and Forky (`HyperHDR-24.0.0~bookworm~beta0-aarch64.deb`, `…~trixie~beta0-aarch64.deb`) | `master` run [43719047798](https://github.com/Hans5849/HyperHDR/actions/runs/43719047798) |
+| Hardware-free capture tests in hosted CI | **Integrated** on x86_64 and ARM64 under ASan/UBSan: V4L2 capture and recovery (including #33), the independent BGR24 reference suite (#31), the real `FrameDecoder` BGR24 dispatch, CLI, packaging, evidence collector, diagnostics and board-workflow policy tests | `CaptureTests` jobs in every `push-pull.yml` run |
+| Native build and install on the Orange Pi | **Done** (2026-11-09) | See the update below |
+| Board workflow (`RK3588 board checks`) | **Needs a successful rerun.** The first run passed all sanitizer suites natively on the board but failed the benchmark step on the executable path (`./build-codec/DecoderTest` instead of `build-codec/bin/DecoderTest`). The path is fixed on `master`; the workflow hasn't been rerun since | Run [43716032809](https://github.com/Hans5849/HyperHDR/actions/runs/43716032809) |
+| Hardware validation | **Separate from all of the above, and still pending**: HDMI frames inside HyperHDR, image correctness, preview, reconnect behaviour, WLED/DDP output, CPU and memory under load | [Hardware validation](rk3588-hardware-validation.md), #8 |
+
+Compilation and passing hosted CI show that the code builds and that its
+hardware-free tests pass on both architectures. They don't show that capture works
+on the board. What each frame count and timing measures (captured, accepted,
+decoded, LED output) is defined in [frame stages](rk3588-frame-stages.md). No
+end-to-end or WLED output latency has been measured.
 
 ## 2026-11-09 update: first board results and follow-up fixes
 
@@ -64,10 +84,12 @@ yet. The `RK3588 board checks` workflow now records both cores with that context
 (`bgr24-bench-a76.txt`, `bgr24-bench-a55.txt`); the A55 result is still to be
 captured from an Actions run on the board.
 
-The first workflow run on the board built the application but failed the
-benchmark with exit status 127: it ran `./build-codec/DecoderTest`, while CMake
-writes the executable to `build-codec/bin/DecoderTest`. Fixed in PR #30 and
-guarded by `tests/ci/board-workflow-policy-test.py`.
+The first workflow run on the board passed every sanitizer suite natively but
+failed the benchmark with exit status 127: it ran `./build-codec/DecoderTest`,
+while CMake writes the executable to `build-codec/bin/DecoderTest` (confirmed by the
+hosted build log: `Linking CXX executable bin/DecoderTest`). Fixed in PR #30 and
+guarded by `tests/ci/board-workflow-policy-test.py`. **A successful rerun is still
+needed.**
 
 ## Original implementation (2026-11-04)
 
@@ -103,7 +125,7 @@ was performed in that session.
 | Existing decoder comparisons | PASS, all 28 combinations, no ERROR or mismatch output |
 | Native Debian package | PASS, HyperHDR-24.0.0-beta.0-Linux-x86_64.deb; development Trixie amd64, dependency bundling OFF |
 | HTTP/sysinfo JSON-RPC smoke | PASS in isolated Docker daemon service, no hardware |
-| Bookworm ARM64 package | BLOCKED before compilation by missing QEMU/binfmt; image pull succeeded |
+| Bookworm ARM64 package | BLOCKED before compilation by missing QEMU/binfmt; image pull succeeded. *Superseded: hosted CI now builds ARM64 Bookworm and Trixie packages (see Current status).* |
 | HDMI/Orange Pi/WLED | NOT RUN; no attached hardware |
 
 Toolchain: Debian Trixie image, GCC 14.2, C++20, CMake 3.31.6, Qt 6.8.4.
@@ -129,8 +151,9 @@ PLATFORM=linux DISTRO_NAME=debian DISTRO_VERSION=bookworm ARCHITECTURE=arm64 \
 ```
 
 It pulled `ghcr.io/awawa-dev/arm64/debian:bookworm`, then stopped because the host
-has no registered QEMU/binfmt setup. No ARM64 target was compiled and no ARM64
-.deb exists. The validation guide gives the supported script and an explicit
+has no registered QEMU/binfmt setup. At that time (2026-11-04) no ARM64 target was
+compiled and no ARM64 .deb existed. *Superseded: hosted CI now builds them on
+native ARM64 runners, and the board built one natively on 2026-11-09.* The validation guide gives the supported script and an explicit
 V4L2-enabled Docker/CMake/CPack command for a capable host. No release workflow,
 secrets or privileged host emulation changes were added.
 
@@ -167,7 +190,8 @@ subscription, DV timing changes, quantization, top-down preview and repeated
 start/stop/disconnect recovery. Timer scheduling and worker teardown were source
 reviewed; mocked buffer tests do not establish their behavior against a kernel
 HDMI driver. Unsupported separate-plane decoder formats remain an explicit
-scope limit. Capture/LED latency and CPU performance remain unmeasured.
+scope limit. Capture/LED latency and CPU performance remain unmeasured (manual
+decoder-only timings are in the 2026-11-15 section above).
 
 Superseded: the package was later built natively on Debian 13 arm64 and
 installed on the Orange Pi (see the 2026-11-09 update). HDMI and WLED/DDP
