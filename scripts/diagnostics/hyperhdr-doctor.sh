@@ -265,7 +265,7 @@ if want runtime; then
 		for cat in "no signal:|the receiver reports no source; connect or power on the HDMI source" \
 		           "timeout:|frames stopped while the receiver reported no loss; check the source and cable" \
 		           "initialization failed:|discovery, format negotiation or buffer setup failed; check capture.* checks" \
-		           "streaming failed:|the driver reported a streaming error; see the kernel log (journalctl -k)"; do
+		           "streaming failed:|the driver reported a streaming error, or frames kept failing to decode ('decoding:'); see the kernel log (journalctl -k) and the source format"; do
 			key=${cat%%|*}; hint=${cat#*|}
 			N=$(grep -c -- "$key" "$EV/log.journal.txt")
 			[ "$N" -gt 0 ] && warn "log.capture.$(printf '%s' "${key%%:*}" | tr ' ' '_')" "$N '$key' line(s): $(grep -m1 -- "$key" "$EV/log.journal.txt" | sed "s/.*\($key\)/\1/" | cut -c1-120)" "$hint"

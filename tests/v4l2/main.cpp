@@ -925,5 +925,108 @@ int main()
 		REQUIRE(!recovery.shortFrame() && !recovery.shortFrame() && recovery.shortFrame());
 		REQUIRE(recovery.frameReceived() == 0 && !recovery.shortFrame());  // a good frame resets the run
 	});
+	// ---- Decode health: buffers arrive but never decode ------------------------------
+	test("decode health: isolated errors never restart", [] {
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		int64_t now = 0;
+		// 60 fps for two minutes; every 30th frame fails, and a run of 29 failures
+		// each minute: all recoverable, never a restart.
+		for (int i = 0; i < 7200; ++i, now += 16)
+		{
+			const bool fails = (i % 30 == 0) || (i % 3600 >= 100 && i % 3600 < 129);
+			r.step([&] { r.sup.frameReceived(); fails ? r.sup.decodeFailed(now, "corrupt JPEG") : r.sup.decodeSucceeded(); });
+		}
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.host.starts == 1 && r.host.retryMs < 0);
+		REQUIRE(r.host.count(LogLevel::Warning, "decoding:") == 0);
+	});
+	test("decode health: persistent failure restarts after both the count and the window", [] {
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		int64_t now = 1000;
+		// 60 fps, every frame fails: 30 failures after ~0.5 s is not enough on its own.
+		for (int i = 0; i < 30; ++i, now += 16) r.step([&] { r.sup.frameReceived(); r.sup.decodeFailed(now, "tjDecompress2: corrupt"); });
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.sup.consecutiveDecodeFailures() == 30);
+		while (r.sup.state() == Supervisor::State::Streaming && now < 7000)
+		{
+			r.step([&] { r.sup.frameReceived(); r.sup.decodeFailed(now, "tjDecompress2: corrupt"); });
+			now += 16;
+		}
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == 3000 && !r.host.capture);
+		REQUIRE(now >= 1000 + Supervisor::decodeFailureWindowMs && now < 1000 + Supervisor::decodeFailureWindowMs + 32);
+		REQUIRE(r.host.count(LogLevel::Warning, "streaming failed: decoding: ") == 1);
+		REQUIRE(r.host.count(LogLevel::Warning, "(last error: tjDecompress2: corrupt)") == 1);
+	});
+	test("decode health: slow sources need the full failure count", [] {
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		int64_t now = 0;
+		for (int i = 0; i < 29; ++i, now += 1000) r.step([&] { r.sup.decodeFailed(now); });   // 1 fps, 28 s
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming);                                // window passed, count not
+		r.step([&] { r.sup.decodeFailed(now); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff);
+	});
+	test("decode health: repeated decode failures escalate the backoff", [] {
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		int64_t now = 0;
+		auto failForSixSeconds = [&] {
+			for (int i = 0; i < 400 && r.sup.state() == Supervisor::State::Streaming; ++i, now += 16)
+				r.step([&] { r.sup.frameReceived(); r.sup.decodeFailed(now); });
+		};
+		std::vector<int> delays;
+		for (int round = 0; round < 5; ++round)
+		{
+			failForSixSeconds();
+			REQUIRE(r.sup.state() == Supervisor::State::Backoff);
+			delays.push_back(r.host.retryMs);
+			r.step([&] { r.sup.retryTimerFired(); });   // restarts; buffers dequeue again but still don't decode
+			REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.sup.awaitingDecode());
+		}
+		// Dequeues alone don't count as recovery, so the delay grows instead of
+		// resetting to 3 s every time.
+		REQUIRE(delays == (std::vector<int>{ 3000, 6000, 12000, 24000, 30000 }));
+		REQUIRE(r.host.count(LogLevel::Info, "Capture recovered") == 0);
+		r.step([&] { r.sup.frameReceived(); r.sup.decodeSucceeded(); });
+		REQUIRE(!r.sup.awaitingDecode() && r.host.count(LogLevel::Info, "Capture recovered after 5 failed attempt(s)") == 1);
+		failForSixSeconds();
+		REQUIRE(r.host.retryMs == 3000);   // healthy again: the next outage starts from the shortest delay
+	});
+	test("decode health: short frames still reset while recovery waits for a decode", [] {
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		int64_t now = 0;
+		for (int i = 0; i < 400 && r.sup.state() == Supervisor::State::Streaming; ++i, now += 16)
+			r.step([&] { r.sup.frameReceived(); r.sup.decodeFailed(now); });
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.sup.awaitingDecode());
+		// Two short frames, a complete payload, two more: never three in a row.
+		for (int i = 0; i < 10; ++i)
+		{
+			REQUIRE(!r.sup.shortFrame()); REQUIRE(!r.sup.shortFrame());
+			r.step([&] { r.sup.frameReceived(); });
+		}
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming);
+	});
+	test("decode health: late or out-of-state results are ignored; stop and start reset", [] {
+		using Next = FakeHost::Next;
+		Rig r; r.host.script = { Next::StreamFail };
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff);
+		for (int i = 0; i < 100; ++i) r.step([&] { r.sup.decodeFailed(i * 100); });   // workers finishing after teardown
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.sup.consecutiveDecodeFailures() == 0 && r.host.retryMs == 3000);
+		r.step([&] { r.sup.retryTimerFired(); });
+		for (int i = 0; i < 29; ++i) r.step([&] { r.sup.decodeFailed(10000 + i * 1000); });
+		r.step([&] { r.sup.stop(); });
+		REQUIRE(r.sup.consecutiveDecodeFailures() == 0 && !r.sup.awaitingDecode());
+		r.step([&] { r.sup.start(); });
+		r.step([&] { r.sup.decodeFailed(100000); });                                   // one failure after a fresh start
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.sup.consecutiveDecodeFailures() == 1);
+		// An explicit start also forgets a pending decode-recovery requirement.
+		for (int i = 0; i < 400 && r.sup.state() == Supervisor::State::Streaming; ++i) r.step([&] { r.sup.decodeFailed(100000 + i * 16); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.sup.awaitingDecode());
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming && !r.sup.awaitingDecode());
+	});
 	std::cout << passed << " test groups passed\n";
 }
