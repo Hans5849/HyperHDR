@@ -4,7 +4,10 @@
 
 Orange Pi 5 Plus, RK3588, Armbian 26.8.3 / Debian 13 Trixie, kernel
 `6.18.44-current-rockchip64`. The receiver identifies as driver `snps_hdmirx`,
-bus `platform:fdee0000.hdmi_receiver`, currently `/dev/video2`. It exposes
+bus `platform:fdee0000.hdmi_receiver`, then at `/dev/video2`. Later boots placed
+it at `/dev/video5` and, on Armbian 26.11.0, `/dev/video1`; the node number is
+not stable. See [hardware validation](rk3588-hardware-validation.md) for the
+2026-11-09 board results. It exposes
 VIDEO_CAPTURE_MPLANE and BGR3 with one memory plane: 1920x1080, bytesperline 5760,
 sizeimage/payload 6,220,800, MMAP, approximately 60 fps.
 
@@ -45,7 +48,11 @@ Other capture backends and color-processing behavior are unchanged.
    Missing driver/bus fields or several capture nodes sharing the same identity
    retain distinct legacy names; an ambiguous identity is never silently merged.
 2. Standard QUERY_DV_TIMINGS no-link/unlocked errors now abort initialization
-   before S_FMT/REQBUFS and enter the existing delayed retry. Unsupported DV
+   before S_FMT/REQBUFS and enter the existing delayed retry. *Superseded
+   (2026-11-14):* when the receiver reports no input through `power_present`
+   or QUERY_DV_TIMINGS, capture now pauses with no buffers allocated, keeps a
+   separate event-subscribed handle, and re-probes every 2 s or on a
+   source-change event, instead of waiting for the backoff timer. Unsupported DV
    timing ioctls on ordinary cameras are tolerated. When signal geometry changes,
    S_DV_TIMINGS runs before format negotiation and buffer allocation. Reserved
    bytes and descriptive flags cannot cause a spurious timing mismatch.
@@ -68,8 +75,10 @@ PLATFORM=linux DISTRO_NAME=debian DISTRO_VERSION=trixie ARCHITECTURE=arm64 \
   BUILD_ARCHIVES=false USE_CCACHE=false bash ./build.sh
 ```
 
-An x86 build host needs working QEMU/binfmt for this emulated ARM64 build. The
-review workspace has not produced a new ARM64 package. For a native application
+An x86 build host needs working QEMU/binfmt for this emulated ARM64 build. A
+native build on the board itself (Debian 13 arm64, GCC 14.2, Qt 6.8.2) has since
+produced and installed a package; see
+[hardware validation](rk3588-hardware-validation.md). For a native application
 build, use the dependencies in BUILDING.md and explicitly configure
 `cmake -S . -B build -DPLATFORM=linux -DENABLE_V4L2=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo`.
 
@@ -77,8 +86,8 @@ With HyperHDR stopped, enumerate and confirm identity rather than assuming a nod
 
 ```sh
 v4l2-ctl --list-devices
-# Set this from that output; video2 is the operator's current observation only.
-capture_device=/dev/video2
+# The node number changes across boots; resolve it by driver name.
+capture_device=$(v4l2-ctl --list-devices | awk '/snps_hdmirx/ {getline; print $1; exit}')
 v4l2-ctl -d "$capture_device" --all
 v4l2-ctl -d "$capture_device" --list-formats-ext
 v4l2-ctl -d "$capture_device" --get-fmt-video --query-dv-timings

@@ -8,7 +8,7 @@ No RK3588 performance measurements were made for this branch. The user's earlier
 | Case | Capture | Processing | Interpretation |
 | --- | --- | --- | --- |
 | Official stable HyperHDR | native HDMI if supported; otherwise a fixed USB capture source | stock CPU path | Record native discovery/start failure as unsupported, never 0 ms latency |
-| Modified branch | rk_hdmirx BGR3, one-plane MPLANE | CPU, full then quarter output | Primary baseline for a future accelerator |
+| Modified branch | native receiver (`snps_hdmirx` on mainline) BGR3, one-plane MPLANE | CPU, full then quarter output | Primary baseline for a future accelerator |
 | Future RGA branch | identical native capture | RGA, matched output dimensions first | Separate result; not implemented here |
 
 If official stable cannot capture native HDMI, a USB path is useful operationally
@@ -22,7 +22,7 @@ Keep source content, HDR/SDR mode, quantization, crop, LED layout/count, WLED/DD
 network, brightness, signal detection, smoothing and tone mapping identical.
 Disable software frame decimation for throughput runs. Start with tone mapping
 and smoothing off; then measure the normal deployment configuration separately.
-Do not run two consumers of /dev/video0 at once.
+Do not run two consumers of the receiver node at once.
 
 ## Run schedule
 
@@ -55,8 +55,10 @@ context switches. A perf permission error is missing data, not zero overhead.
 With HyperHDR stopped, independently repeat:
 
 ```sh
-v4l2-ctl -d /dev/video0 --get-fmt-video --get-dv-timings
-v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=18000 --stream-to=/dev/null
+# The node number changes across boots; look it up by driver name.
+RX=$(v4l2-ctl --list-devices | awk '/snps_hdmirx|rk_hdmirx/ {getline; print $1; exit}')
+v4l2-ctl -d "$RX" --get-fmt-video --get-dv-timings
+v4l2-ctl -d "$RX" --stream-mmap=4 --stream-count=18000 --stream-to=/dev/null
 ```
 
 Record the reported rate and elapsed time. This establishes driver-only delivery.

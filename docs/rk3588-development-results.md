@@ -1,9 +1,46 @@
 # RK3588 native HDMI development results
 
 Development date: 2026-11-04. Base: b1451f2868072c5b8eda0ae61c0fcf33ecc1bfc5
-in Hans5849/HyperHDR. Local development branch: `feature/rk3588-hdmirx`.
+in Hans5849/HyperHDR. Original branch: `feature/rk3588-hdmirx`, since merged to
+`master` through PR #1 and deleted. Follow-up work continues on
+`claude/great-heisenberg-bgp44k`.
+
+## 2026-11-09 update: first board results and follow-up fixes
+
+An operator built `cca3898` natively on the Orange Pi 5 Plus (Armbian 26.11.0,
+Debian 13 arm64, mainline kernel 6.18.44, GCC 14.2.0, CMake 3.31.6, Qt 6.8.2,
+Ninja). The package installed through APT, `hyperhdr@ryan.service` runs, and both
+hardware-free tests passed on the board. The receiver is the mainline
+`snps_hdmirx` driver (not `rk_hdmirx`) at a dynamic `/dev/videoN`, MPLANE, BGR3,
+one memory plane, with a read-only `power_present` control. It was discovered and
+initialized correctly. With no HDMI source connected, streaming started and then
+cycled through the five-second timeout. **No HDMI frames, preview or WLED output
+have been validated.**
+
+Follow-up changes:
+
+- Command line: flags no longer trigger `QCommandLineParser: option not expecting
+  values` warnings. Conflicting `--silent`, `--verbose` and `--debug` now exit 1
+  instead of 0. Parser unit tests and an installed-binary smoke test were added.
+- No signal: receivers that report `power_present=0` or a DV-timings
+  `ENOLINK`/`ENOLCK`/`ERANGE` are no longer streamed. Capture pauses with no
+  buffers allocated, re-probes every 2 s and on source-change events, and starts
+  when a signal appears. Devices without these interfaces (USB) are unchanged.
+  Logs distinguish no signal, timeout, initialization, streaming and source-change
+  failures.
+- Discovery: memory-to-memory nodes are rejected explicitly. A saved device is
+  re-found by its card name after renumbering. Regression tests cover node
+  reordering, Rockchip codec/RGA nodes, MPLANE, one-plane and multi-plane
+  formats, and discovery without a signal.
+- Packaging: the default `.deb` now declares `Version: 24.0.0~beta.0` instead of
+  `24.0.0`. A `dpkg-deb` check runs in CI for every Debian/Ubuntu package.
+
+See `rk3588-hardware-validation.md` for the operator procedure and pending checks.
+
+## Original implementation (2026-11-04)
+
 No merge, upstream PR, release workflow change, release or physical-board action
-was performed.
+was performed in that session.
 
 ## Implemented
 
@@ -92,7 +129,7 @@ Documentation:
 
 ## Remaining review and hardware work
 
-Validate both normal single-planar capture and native rk_hdmirx against real
+Validate both normal single-planar capture and the native receiver (`snps_hdmirx` on mainline) against real
 kernel devices. In particular, confirm TRY_FMT/S_FMT behavior, source-event
 subscription, DV timing changes, quantization, top-down preview and repeated
 start/stop/disconnect recovery. Timer scheduling and worker teardown were source
@@ -100,8 +137,9 @@ reviewed; mocked buffer tests do not establish their behavior against a kernel
 HDMI driver. Unsupported separate-plane decoder formats remain an explicit
 scope limit. Capture/LED latency and CPU performance remain unmeasured.
 
-Build Bookworm ARM64, install manually on the Orange Pi, then validate HDMI and
-WLED/DDP with the supplied rollback procedure. No hardware success is claimed.
+Superseded: the package was later built natively on Debian 13 arm64 and
+installed on the Orange Pi (see the 2026-11-09 update). HDMI and WLED/DDP
+validation is still pending.
 
 Recommend an optional RGA prototype using persistent DMA-BUF imports and bounded
 output pools; confirm EXPBUF support and fence/cache semantics first. Compare
@@ -113,6 +151,6 @@ or speedup is included in this implementation.
 
 The GitHub CLI authentication check reported an invalid token, but the managed
 Git connection successfully pushed the branch and the connected GitHub tool
-created [draft PR #1](https://github.com/Hans5849/HyperHDR/pull/1), targeting
-`Hans5849/HyperHDR:master`. The PR remains draft and unmerged. No upstream PR was
-opened. A review archive also preserves the patches, documents and local logs.
+created [PR #1](https://github.com/Hans5849/HyperHDR/pull/1), targeting
+`Hans5849/HyperHDR:master`. It was merged on 2026-11-04. No upstream PR was
+opened.
