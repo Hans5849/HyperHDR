@@ -1201,6 +1201,13 @@ bool V4L2Grabber::init_device(QString selectedDeviceName, DevicePropertiesItem p
 			_frameByteSize = uint64_t(_lineLength) * (props.y - 1) + uint64_t(props.x) * 3;
 			Info(_log, "Video pixel format is set to: BGR24 ({:s} range)",
 				negotiated.quantization == V4L2_QUANTIZATION_LIM_RANGE ? "limited" : "full/default");
+			// Record both range sources; the decoder follows the format only.
+			const auto rxRange = V4L2Capture::receiverRgbRange(_operations, _fileDescriptor);
+			Info(_log, "RGB range evidence: format quantization {:s}, receiver RGB range control {:s}",
+				V4L2Capture::quantizationName(negotiated.quantization), V4L2Capture::name(rxRange));
+			const auto mismatch = V4L2Capture::rangeMismatch(negotiated.quantization, rxRange);
+			if (!mismatch.empty())
+				Warning(_log, "RGB range mismatch: {:s}. Not overriding; record the source and its AVI infoframe", mismatch);
 		}
 		break;
 

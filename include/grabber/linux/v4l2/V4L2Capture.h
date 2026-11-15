@@ -443,6 +443,65 @@ inline SignalStatus probeSignal(Operations& ops, int fd)
 }
 
 // ---------------------------------------------------------------------------
+// RGB quantization evidence (issue #10). Decoding follows the negotiated
+// format quantization only; these helpers report, they never override.
+
+enum class RgbRange { Unsupported, Auto, Limited, Full };
+
+// V4L2_CID_DV_RX_RGB_RANGE where the receiver exposes it. On mainline
+// snps_hdmirx it is read-only and reflects the HDMI AVI infoframe; on other
+// receivers "Auto" means "follow the infoframe" and carries no range.
+inline RgbRange receiverRgbRange(Operations& ops, int fd)
+{
+	v4l2_control range{};
+	range.id = V4L2_CID_DV_RX_RGB_RANGE;
+	if (ops.control(fd, VIDIOC_G_CTRL, &range) < 0)
+		return RgbRange::Unsupported;
+	switch (range.value)
+	{
+		case V4L2_DV_RGB_RANGE_LIMITED: return RgbRange::Limited;
+		case V4L2_DV_RGB_RANGE_FULL: return RgbRange::Full;
+		default: return RgbRange::Auto;
+	}
+}
+
+inline const char* name(RgbRange range)
+{
+	switch (range)
+	{
+		case RgbRange::Auto: return "auto";
+		case RgbRange::Limited: return "limited";
+		case RgbRange::Full: return "full";
+		default: return "not exposed";
+	}
+}
+
+inline const char* quantizationName(__u32 quantization)
+{
+	switch (quantization)
+	{
+		case V4L2_QUANTIZATION_DEFAULT: return "default";
+		case V4L2_QUANTIZATION_FULL_RANGE: return "full";
+		case V4L2_QUANTIZATION_LIM_RANGE: return "limited";
+		default: return "unknown";
+	}
+}
+
+// Empty when the two agree or the control carries no range. Otherwise says
+// what the decoder will do with the frames so the log is actionable.
+inline std::string rangeMismatch(__u32 quantization, RgbRange range)
+{
+	const bool decodedLimited = quantization == V4L2_QUANTIZATION_LIM_RANGE;
+	if (range == RgbRange::Limited && !decodedLimited)
+		return std::string("receiver reports limited-range RGB but the format quantization is ") +
+			quantizationName(quantization) + ", so frames are not expanded (black stays at 16, white at 235)";
+	if (range == RgbRange::Full && decodedLimited)
+		return "receiver reports full-range RGB but the format quantization is limited, "
+			"so frames are expanded (values below 16 and above 235 clip)";
+	return {};
+}
+
+// ---------------------------------------------------------------------------
 // Discovery helpers. Nothing here depends on /dev/videoN numbering.
 
 struct Node

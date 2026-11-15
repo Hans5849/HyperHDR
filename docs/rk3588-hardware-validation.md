@@ -228,7 +228,10 @@ captured evidence (logs, screenshots, measurements).
    corners and separate red, green and blue patches.
 5. Preview correctness, including limited-range black 16 and white 235 expanding
    to 0 and 255 with no double expansion, quarter-frame, crop and tone mapping
-   tested one at a time.
+   tested one at a time. Record the startup line
+   `RGB range evidence: format quantization ..., receiver RGB range control ...`
+   for each source and any `RGB range mismatch:` warning (#10). Decoding follows
+   the format quantization only; a mismatch is evidence, not an automatic fix.
 6. Reconnection and signal loss: unplug and replug, power the source off and on,
    change the timing and back, ten times each, plus a start with the source
    absent. Expect `no signal` followed by `Input signal ... starting capture`,
