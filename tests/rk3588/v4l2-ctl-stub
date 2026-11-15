@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Stand-in for v4l2-ctl: replays output shaped like the Orange Pi 5 Plus
+# (mainline snps_hdmirx at /dev/video1, no HDMI source) for the evidence test.
+dev=""; args=()
+while [ $# -gt 0 ]; do case "$1" in -d) dev=$2; shift 2;; *) args+=("$1"); shift;; esac; done
+case "$dev:${args[0]}" in
+	:--list-devices) printf 'snps_hdmirx (platform:fdee0000.hdmi_receiver):\n\t/dev/video1\n\nrkvdec (platform:rkvdec):\n\t/dev/video0\n';;
+	/dev/video1:--info|/dev/video1:--all)
+		printf 'Driver Info:\n\tDriver name      : snps_hdmirx\n\tCard type        : snps_hdmirx\n\tBus info         : platform:fdee0000.hdmi_receiver\n\tDevice Caps      : 0x04201000\n\t\tVideo Capture Multiplanar\n';;
+	/dev/video0:--info) printf 'Driver Info:\n\tDriver name      : rkvdec\n\tBus info         : platform:rkvdec\n\t\tVideo Memory-to-Memory Multiplanar\n';;
+	/dev/video1:--list-formats-ext) printf "ioctl: VIDIOC_ENUM_FMT\n\tType: Video Capture Multiplanar\n\n\t[0]: 'BGR3' (24-bit BGR 8-8-8)\n";;
+	/dev/video1:--get-fmt-video) printf "Format Video Capture Multiplanar:\n\tWidth/Height      : 1920/1080\n\tPixel Format      : 'BGR3' (24-bit BGR 8-8-8)\n\tNumber of planes  : 1\n\tQuantization      : Default (maps to Full Range)\n";;
+	/dev/video1:--query-dv-timings) echo "VIDIOC_QUERY_DV_TIMINGS: failed: Link has been severed" >&2; exit 255;;
+	/dev/video1:--get-dv-timings) printf '\tActive width: 1920\n\tActive height: 1080\n';;
+	/dev/video1:--list-ctrls-menus) printf '\nDigital Video Controls\n\n                  power_present 0x00a00964 (bitmask)  : max=0x00000001 default=0x00000000 value=0x00000000 flags=read-only, volatile\n rx_rgb_quantization_range 0x00a00965 (menu) : min=0 max=2 default=0 value=0 (Automatic) flags=read-only\n';;
+	*) echo "stub: unhandled $dev ${args[*]}" >&2; exit 1;;
+esac

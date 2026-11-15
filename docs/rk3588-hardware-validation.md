@@ -244,10 +244,36 @@ Repeat 6 with a USB grabber to confirm the single-planar path is unchanged.
 
 ## Collect evidence and troubleshoot
 
-Save the package version (`dpkg-query -W hyperhdr`), commit, kernel, the
-`v4l2-ctl` output above, `journalctl -u "hyperhdr@$svc_user" --since '-30 minutes'`
-and `journalctl -k --since '-10 minutes'`. Do not share configuration exports that
-contain network credentials.
+Run the evidence collector on the board at the start and end of every session,
+and attach its archive to the relevant issue (#8, #10, #11, #13):
+
+```sh
+scripts/rk3588/collect-evidence.sh                 # read-only, safe while HyperHDR runs
+sudo systemctl stop "hyperhdr@$svc_user"
+scripts/rk3588/collect-evidence.sh --stream 600 --expbuf   # kernel stream + DMA-BUF export probe
+sudo systemctl start "hyperhdr@$svc_user"
+```
+
+It records:
+- OS, Armbian and kernel versions, CPU governors and temperatures
+- the installed package version and the binary's SHA-256, plus `hyperhdr --version`
+- the service state
+- every video node's capabilities
+- the receiver's formats, DV timings, controls (including `power_present` and the RGB-range control) and which processes hold it
+- the last 30 minutes of HyperHDR and kernel video logs
+
+It prints a one-screen summary and writes `rk3588-evidence-<UTC time>.tar.gz`.
+
+The default run changes nothing: no service, package, device-setting or streaming
+changes. `--stream N` and `--expbuf` open the receiver, so stop HyperHDR first;
+otherwise they report the node as busy. `--expbuf` compiles
+`scripts/rk3588/v4l2-expbuf-probe.c` with `cc`. It requests two MMAP buffers, tries
+`VIDIOC_EXPBUF` and frees them again without streaming.
+
+IPv4/IPv6/MAC addresses, the hostname and the user name are redacted, and the
+HyperHDR database is never read. Still review the archive before attaching it, and
+do not share configuration exports that contain network credentials. A stream
+result is kernel-level evidence only, not HyperHDR preview or WLED evidence.
 
 - Discovery: check `video` group membership, the node's capability flags and for
   competing processes. Skipped nodes are logged at debug level with a reason.
