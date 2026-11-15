@@ -223,6 +223,11 @@ cancels both pending retries and the signal wait.
 None of the following has been run. Do not mark any item as passed without
 captured evidence (logs, screenshots, measurements).
 
+The [operator checklist](rk3588-operator-checklist.md) turns these into a run
+sheet: each step is classed as safe while HyperHDR runs, needing exclusive
+receiver access, or user-visible, with commands, expected log lines and pass
+criteria.
+
 1. Real signal detection and format negotiation: logs show the detected timing,
    BGR24, stride, one plane and quantization.
 2. 1920x1080 at about 60 fps (`v4l2-ctl -d "$RX" --stream-mmap=4 --stream-count=600 --stream-to=/dev/null`
