@@ -105,6 +105,7 @@ struct SimDevice
 	std::vector<__u32> formats;   // ENUM_FMT order
 	__u32 width = 640, height = 480, fourcc = V4L2_PIX_FMT_BGR24, planes = 1;
 	bool hasPower = false; int power = 0;
+	int rgbRange = -1;            // V4L2_CID_DV_RX_RGB_RANGE, -1 = not exposed
 	int dvErrno = ENOTTY;         // 0 = timings detected
 	unsigned events = 0, dqevents = 0;
 };
@@ -164,6 +165,7 @@ struct SimSystem : Operations
 			case VIDIOC_G_CTRL:
 			{
 				auto& c = *static_cast<v4l2_control*>(arg);
+				if (c.id == V4L2_CID_DV_RX_RGB_RANGE && d.rgbRange >= 0) { c.value = d.rgbRange; return 0; }
 				if (c.id != V4L2_CID_DV_RX_POWER_PRESENT || !d.hasPower) { errno = EINVAL; return -1; }
 				c.value = d.power; return 0;
 			}
@@ -538,6 +540,31 @@ int main()
 		try { throw NoSignal("x"); } catch (const std::runtime_error& e) { caught = std::string(e.what()) == "x"; }
 		REQUIRE(caught);
 		REQUIRE(Recovery::signalPollMs > 0 && Recovery::signalPollMs <= Recovery::initialDelayMs);
+	});
+	test("RGB range evidence: control, names and mismatch reporting", [] {
+		Board board; SimSystem sys; sys.nodes = { { "/dev/video1", &board.hdmirx }, { "/dev/video0", &board.uvc } };
+		const int rx = sys.open("/dev/video1"), usb = sys.open("/dev/video0");
+		REQUIRE(receiverRgbRange(sys, usb) == RgbRange::Unsupported && std::string(name(RgbRange::Unsupported)) == "not exposed");
+		REQUIRE(receiverRgbRange(sys, rx) == RgbRange::Unsupported);
+		board.hdmirx.rgbRange = V4L2_DV_RGB_RANGE_AUTO; REQUIRE(receiverRgbRange(sys, rx) == RgbRange::Auto);
+		board.hdmirx.rgbRange = V4L2_DV_RGB_RANGE_LIMITED; REQUIRE(receiverRgbRange(sys, rx) == RgbRange::Limited);
+		board.hdmirx.rgbRange = V4L2_DV_RGB_RANGE_FULL; REQUIRE(receiverRgbRange(sys, rx) == RgbRange::Full);
+		board.hdmirx.rgbRange = 7; REQUIRE(receiverRgbRange(sys, rx) == RgbRange::Auto);
+		REQUIRE(std::string(quantizationName(V4L2_QUANTIZATION_DEFAULT)) == "default" &&
+			std::string(quantizationName(V4L2_QUANTIZATION_LIM_RANGE)) == "limited" &&
+			std::string(quantizationName(V4L2_QUANTIZATION_FULL_RANGE)) == "full" && std::string(quantizationName(99)) == "unknown");
+		// Agreement, or a control without a range, is silent.
+		for (auto q : { V4L2_QUANTIZATION_DEFAULT, V4L2_QUANTIZATION_FULL_RANGE, V4L2_QUANTIZATION_LIM_RANGE })
+			for (auto r : { RgbRange::Unsupported, RgbRange::Auto })
+				REQUIRE(rangeMismatch(q, r).empty());
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_LIM_RANGE, RgbRange::Limited).empty());
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_FULL_RANGE, RgbRange::Full).empty());
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_DEFAULT, RgbRange::Full).empty());
+		// Disagreements name what the decoder will do.
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_DEFAULT, RgbRange::Limited).find("not expanded") != std::string::npos);
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_FULL_RANGE, RgbRange::Limited).find("quantization is full") != std::string::npos);
+		REQUIRE(rangeMismatch(V4L2_QUANTIZATION_LIM_RANGE, RgbRange::Full).find("clip") != std::string::npos);
+		sys.close(rx); sys.close(usb);
 	});
 	std::cout << passed << " test groups passed\n";
 }
