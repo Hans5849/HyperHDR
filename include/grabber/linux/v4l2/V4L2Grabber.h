@@ -6,6 +6,7 @@
 
 #include <grabber/linux/v4l2/V4L2Capture.h>
 #include <grabber/linux/v4l2/V4L2Supervisor.h>
+#include <grabber/linux/v4l2/V4L2Stats.h>
 #include <memory>
 #include <utils/PixelFormat.h>
 #include <base/Grabber.h>
@@ -118,6 +119,13 @@ private:
 	qint64 _lastFrame = 0;
 	quint64 _generationFrame = 0;
 	quint64 _streamEpoch = 0;
+	// Pipeline counters (docs/rk3588-pipeline-instrumentation.md). All updates are on
+	// the grabber thread (worker signals are queued to it). The summary is logged
+	// once a minute from read_frame and flushed whenever capture is torn down.
+	V4L2Capture::Stats _stats;
+	qint64 _statsIntervalBegin = 0;                // InternalClock::now() (ms) of the interval start; 0 = no interval
+	V4L2Capture::AcceptTimes _acceptTimes;         // per worker: which frame was handed over, and when (us)
+	void reportCaptureStats(qint64 now, const std::string& context = {});
 	// Declared in this order so the supervisor is destroyed before its host.
 	std::unique_ptr<SupervisorHost> _supervisorHost;
 	std::unique_ptr<V4L2Capture::Supervisor> _supervisor;

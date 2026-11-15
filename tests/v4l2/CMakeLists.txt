@@ -9,3 +9,12 @@ target_include_directories(v4l2-capture-test PRIVATE ../../include)
 target_compile_features(v4l2-capture-test PRIVATE cxx_std_17)
 target_compile_options(v4l2-capture-test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME v4l2-capture COMMAND v4l2-capture-test)
+
+# Pipeline counters (issue #9): counting rules, sequence gaps, percentile bounds, threads.
+find_package(Threads REQUIRED)
+add_executable(v4l2-stats-test stats_test.cpp)
+target_include_directories(v4l2-stats-test PRIVATE ../../include)
+target_compile_features(v4l2-stats-test PRIVATE cxx_std_17)
+target_compile_options(v4l2-stats-test PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(v4l2-stats-test PRIVATE Threads::Threads)
+add_test(NAME v4l2-stats COMMAND v4l2-stats-test)
