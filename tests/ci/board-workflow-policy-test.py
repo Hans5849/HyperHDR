@@ -81,6 +81,14 @@ m = re.search(r"SET\(EXECUTABLE_OUTPUT_PATH\s+\$\{PROJECT_BINARY_DIR\}/(\w+)\)",
 check(bool(m) and "add_executable(DecoderTest" in cmake, "CMake puts DecoderTest in ${PROJECT_BINARY_DIR}/<dir>")
 expected = f"build-codec/{m.group(1) if m else '?'}/DecoderTest"
 bench = [s for s in wf["jobs"]["board"]["steps"] if "BGR24 decode benchmark" in s.get("name", "")]
+# The board runs every hosted sanitizer suite natively, including the independent
+# BGR24 reference suite, and cleans each build tree afterwards.
+board_steps = wf["jobs"]["board"]["steps"]
+board_runs = "\n".join(s.get("run", "") for s in board_steps)
+for suite, build in (("tests/v4l2", "build-v4l2"), ("tests/bgr24", "build-bgr24"), ("tests/cli", "build-cli"), ("tests/codec_test", "build-codec-asan")):
+    check(f"cmake -S {suite} -B {build}" in board_runs and f"ctest --test-dir {build}" in board_runs, f"board runs {suite} ({build})")
+    check(re.search(r"rm -rf .*\b%s\b" % re.escape(build), board_runs) is not None, f"board cleans {build}")
+check("fsanitize=address,undefined" in next((s["run"] for s in board_steps if "tests/bgr24" in s.get("run", "")), ""), "BGR24 reference suite runs under ASan/UBSan")
 check(len(bench) == 1, "one BGR24 benchmark step")
 script = bench[0]["run"]
 check(re.search(r'^\s*BUILD=build-codec\s*$', script, re.M) and re.search(r'^\s*BENCH="\$BUILD/%s/DecoderTest"\s*$' % (m.group(1) if m else "?"), script, re.M),
