@@ -27,13 +27,8 @@ inline int checkSystemDecoders()
 				o[0] = p.red; o[1] = p.green; o[2] = p.blue;
 			}
 	};
-	// BGR16 without LUT shifts every pixel and reads past the frame: issue #52,
-	// fixed separately. Running it here would abort under ASan.
-	const Skip skip = [](Format f, bool withLut) -> const char* {
-		return (f == Format::BGR16 && !withLut) ? "known defect #52 (pixel shift, read past the frame), fixed separately" : nullptr;
-	};
-	const int failed = run(decode, { Format::BGRA, Format::RGBA, Format::BGR16, Format::PQ10 }, skip);
+	const int failed = run(decode, { Format::BGRA, Format::RGBA, Format::BGR16, Format::PQ10 });
 	if (failed) { std::printf("FAIL system decoders: %d combination(s)\n", failed); return 1; }
-	std::printf("PASS system decoders: BGRA, RGBA, BGR16, PQ10, every case with no LUT, identity, inverting and channel-rotating LUTs (except the SKIP lines)\n");
+	std::printf("PASS system decoders: BGRA, RGBA, BGR16, PQ10, every case with no LUT, identity, inverting and channel-rotating LUTs\n");
 	return 0;
 }
