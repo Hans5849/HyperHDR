@@ -26,11 +26,36 @@ issue's own acceptance criteria first (last table).
 
 - [ ] `RK3588 board checks` workflow: the latest `master` contains the
   benchmark-path fix (`dd7caa0`) and the change that added this page.
-- [ ] Settings → Environments → `rk3588-hil` has you as a required reviewer.
-- [ ] Settings → Actions → Runners: `opi5plus-hyperhdr-01` is online with its
-  labels. Screenshot this for #28.
+- [ ] The repository settings below are confirmed (screenshot each for #28).
+- [ ] Settings → Actions → Runners: `opi5plus-hyperhdr-01` is online.
 - [ ] Note what else is running on the board (other runners, services). The
   benchmark summary flags load above 1.0, but it can't tell you why.
+
+### Repository settings to confirm (not visible from the code)
+
+The workflow file asks for these protections, but whether they are enforced is
+set in GitHub, under Settings. **Nobody has inspected these from this repository
+or from a Claude session.** Confirm each one yourself before the first approval:
+
+| Setting | Where | Expected |
+|---|---|---|
+| Environment exists | Settings → Environments | `rk3588-hil` is listed. A job naming a missing environment creates it **without** protection, so check that it exists before the first run |
+| Required reviewers | `rk3588-hil` → Deployment protection rules | **Required reviewers** on, with your account. Every run then waits for your approval |
+| Deployment branches | `rk3588-hil` → Deployment branches and tags | **Selected branches and tags**, with only `master`. The workflow also refuses other refs, but this enforces it in GitHub |
+| Environment secrets | `rk3588-hil` → Environment secrets | None needed. The workflow uses only the read-only `GITHUB_TOKEN` |
+| Runner registration | Settings → Actions → Runners | `opi5plus-hyperhdr-01` is registered to **this repository only**, not to an organisation or another repository |
+| Runner labels | the runner's page | exactly `self-hosted, Linux, ARM64, rk3588, orange-pi-5-plus, hyperhdr-hil`. No generic labels such as `ubuntu-latest` that another workflow could match |
+| Workflow token | Settings → Actions → General → Workflow permissions | **Read repository contents** (the default token is read-only). "Allow GitHub Actions to create and approve pull requests" is off |
+| Fork pull requests | Settings → Actions → General → Fork pull request workflows | **Require approval for all external contributors** |
+
+What the repository itself enforces, which the policy test fails on if changed:
+
+- **Triggers:** only `rk3588-board.yml` targets the board labels, and only
+  through `workflow_dispatch`. No pull-request or push event can start it, so
+  pull-request code never reaches the board.
+- **Checks in the workflow:** the job checks that the ref is `master` of
+  `Hans5849/HyperHDR`, uses no third-party actions, and has no `sudo`.
+- **Preflight:** refuses other boards, root and passwordless sudo.
 
 ## 1. `stage: tests` (safe while HyperHDR runs)
 
@@ -49,8 +74,13 @@ timing may degrade in that window.
 
 ```sh
 gh run download <run-id> -R Hans5849/HyperHDR -n rk3588-board-tests-<run-number> -D board-tests
-python3 scripts/rk3588/verify-board-artifact.py --commit <sha> board-tests
+python3 scripts/rk3588/verify-board-artifact.py --commit <sha> --hostname <runner host name> --user <board user> board-tests
 ```
+
+`--commit` is the run's commit from the run page. Without it, the verifier warns
+that the commit wasn't compared with an approved SHA. `--hostname` and `--user`
+are the board's host and user names, which must not appear anywhere in the
+artifact. The verifier can't recognise a host name it isn't given.
 
 `RESULT: OK` means:
 
@@ -58,11 +88,16 @@ python3 scripts/rk3588/verify-board-artifact.py --commit <sha> board-tests
 - both cores exited 0 and name the same commit everywhere;
 - each result is pinned to the CPU the preflight chose, and decoded as the right
   core;
+- each pinned CPU is in the board's own cluster for that core (A76: 4–7,
+  A55: 0–3 on this board);
+- the compiler, a 64-bit ARM build and the kernel and toolchain are recorded;
 - every statistic is recomputed from its raw samples, 24 cases per core;
-- no tokens, keys or unredacted addresses were found.
+- no tokens, keys, unredacted IPv4, IPv6 or MAC addresses, or the given host and
+  user names were found.
 
 `WARN baseline` lines (governor not `performance`, load above 1.0, frequency
-change, temperature at or above 80 °C) mean the numbers are **indicative, not a
+change or unreadable, temperature at or above 80 °C or unreadable, an
+unoptimised build or assertions) mean the numbers are **indicative, not a
 baseline**. Say so when you post them. A `FAIL` means don't use the results.
 Attach the verify output, and fix or report the cause first.
 
@@ -82,7 +117,9 @@ Same workflow:
 
 Download and verify as in step 2, with `-n rk3588-board-probe-<run-number>`.
 The verifier also checks that both archives are present and readable, and that
-there's **no stream or EXPBUF probe** in the bundle.
+there's **no stream or EXPBUF probe** in the bundle. It reports
+`WARN probe EXPBUF not tested (read-only probe): this run is not EXPBUF evidence`,
+so a read-only probe can't be cited as an EXPBUF result.
 
 Attach to #27:
 
@@ -127,6 +164,12 @@ can't see host processes. If you use the workflow's `expbuf: true`, setting
 `host_idle_confirmed` is **your attestation** that you stopped the service;
 nothing checks it independently. Note the stop and start times in #13 and #28.
 Skip this step if no maintenance window is planned.
+
+Only `PASS probe EXPBUF succeeded (expbuf=ok)` from the verifier counts as
+EXPBUF evidence. A probe that ran but failed (for example
+`expbuf=Device or resource busy`, because the receiver was still in use) or
+couldn't be built is a WARN that names the result. It is evidence of the
+failure, not of EXPBUF support.
 
 ## What this session can and can't close
 

@@ -236,7 +236,7 @@ jobs:
         shell: bash
         run: |
           if command -v python3 >/dev/null; then
-            python3 scripts/rk3588/verify-board-artifact.py --commit "$GITHUB_SHA" board-results >board-results/verify.txt 2>&1 || true
+            python3 scripts/rk3588/verify-board-artifact.py --commit "$GITHUB_SHA" --hostname "$(hostname)" board-results >board-results/verify.txt 2>&1 || true
             cat board-results/verify.txt
           else
             echo "::notice::python3 is not on the runner: run scripts/rk3588/verify-board-artifact.py on the downloaded artifact"

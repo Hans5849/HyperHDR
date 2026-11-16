@@ -105,7 +105,7 @@ board_suites = set(re.findall(r"cmake -S (tests/[a-z_0-9]+)", board_runs))
 check(board_suites <= set(re.findall(r"cmake -S (tests/[a-z_0-9]+)", hosted)), f"every board suite also runs hosted ({sorted(board_suites)})")
 check(re.search(r"runner: ubuntu-[0-9.]+-arm\b", hosted) is not None, "hosted CI has a native ARM64 runner for the hardware-free suites")
 verify = [s for s in board_steps if "verify-board-artifact.py" in s.get("run", "")]
-check(len(verify) == 1 and verify[0].get("if") == "always()" and "--commit \"$GITHUB_SHA\" board-results" in verify[0]["run"],
+check(len(verify) == 1 and verify[0].get("if") == "always()" and "--commit \"$GITHUB_SHA\" --hostname \"$(hostname)\" board-results" in verify[0]["run"],
       "the artifact is verified in place, always, against this run's commit")
 names = [s.get("name", "") for s in board_steps]
 check(names.index(verify[0]["name"]) < names.index("Upload results") if verify else False, "verification output is uploaded with the artifact")

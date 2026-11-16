@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
 """Check a downloaded `RK3588 board checks` artifact before using its results.
 
-  verify-board-artifact.py [--commit SHA] [--json] DIR
+  verify-board-artifact.py [--commit SHA] [--hostname NAME] [--user NAME] [--json] DIR
 
 DIR is the unzipped artifact (rk3588-board-<stage>-<run>), which holds
 metadata.json and the stage's files. Standard library only; reads files, runs
 nothing on the board, needs no network.
 
 Checks, each reported as PASS, WARN or FAIL:
-  run          metadata.json parses; master ref; the commit (equal to --commit
-               when given); stage and expbuf inputs; board identity and the
-               preflight's pinned A76/A55 CPUs
+  run          metadata.json parses; master ref; the commit (equal to --commit;
+               WARN when --commit isn't given); stage and expbuf inputs; board
+               identity; the preflight's pinned CPUs, each in its own cluster;
+               kernel and toolchain recorded
   benchmark    both cores' text, JSON and CSV present; exit status 0; the same
                commit everywhere; each JSON pinned to the CPU the preflight chose
-               and decoded as the right core; statistics recomputed from raw
-               samples (bench-summarize.py); bench-validate.py when available;
-               the summary present
+               and decoded as the right core; compiler and 64-bit ARM recorded;
+               statistics recomputed from raw samples (bench-summarize.py);
+               bench-validate.py when available; the summary present
   baseline     run conditions (governor, load, frequency change, temperature,
-               pinning) from bench-summarize.py: WARN, the numbers are
-               indicative only, not a baseline
+               pinning) from bench-summarize.py, an unoptimised or assertion
+               build, unreadable frequencies or thermal zones: WARN, the numbers
+               are indicative only, not a baseline
   probe        evidence and diagnostics archives present and readable; without
-               expbuf, no stream or EXPBUF probe in the bundle; with expbuf, the
-               probe result present
-  privacy      no access tokens or private keys anywhere; no IPv4 or MAC
-               addresses inside the archives that are supposed to be redacted
+               expbuf, no stream or EXPBUF probe in the bundle and a WARN that
+               EXPBUF was not tested; with expbuf, PASS only for `expbuf=ok`
+               (a failed or skipped probe is a WARN, never EXPBUF evidence)
+  privacy      no access tokens or private keys anywhere; no IPv4, IPv6 or MAC
+               addresses inside the archives that are supposed to be redacted;
+               the --hostname and --user given appear nowhere. Hostnames can't be
+               recognised without --hostname: pass the runner host's name.
 
 Exit status: 0 no FAIL (WARN allowed), 1 at least one FAIL, 2 usage.
 """
@@ -40,6 +45,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 CORES = (("a76", "A76", "Cortex-A76"), ("a55", "A55", "Cortex-A55"))
 PATTERNS = ["random", "gradient", "solid"]
 SECRET = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+IPV6 = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}(?![0-9A-Fa-f:])|\b[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*::(?:[0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{1,4})*)?\b")
 IPV4 = re.compile(r"(?<![\d.])(?!127\.0\.0\.1\b|0\.0\.0\.0\b)(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 MAC = re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")
 
@@ -76,7 +82,11 @@ def read_json(path):
         return None, str(e)
 
 
-def verify(d, commit=None):
+def cpus(text):
+    return {int(t) for t in re.findall(r"\d+", text or "")}
+
+
+def verify(d, commit=None, hostname=None, user=None):
     r = Report()
     summarize = load_module("bench_summarize", "bench-summarize.py")
     validate = load_module("bench_validate", "bench-validate.py")
@@ -89,6 +99,8 @@ def verify(d, commit=None):
     r.ok(re.fullmatch(r"[0-9a-f]{40}", sha) is not None, "run", "commit %s" % sha[:12], "metadata has no full commit SHA (%r)" % sha)
     if commit:
         r.ok(sha.startswith(commit.lower()), "run", "commit matches --commit", "commit %s, expected %s" % (sha[:12], commit))
+    else:
+        r.add("WARN", "run", "commit not compared with an approved SHA: pass --commit <sha> from the run page")
     r.ok(git.get("ref") == "refs/heads/master", "run", "ran from master", "ran from %r, not master" % git.get("ref"))
     stage = inputs.get("stage")
     r.ok(stage in ("tests", "probe"), "run", "stage %s" % stage, "unknown stage %r" % stage)
@@ -99,6 +111,14 @@ def verify(d, commit=None):
     pinned = {"a76": str(runner.get("pinned_a76") or ""), "a55": str(runner.get("pinned_a55") or "")}
     r.ok(all(v.isdigit() for v in pinned.values()), "run", "preflight pinned A76 CPU %s, A55 CPU %s" % (pinned["a76"], pinned["a55"]),
          "preflight didn't record both pinned CPUs (%s)" % pinned)
+    for key, label, _ in CORES:
+        cluster = cpus(board.get(key))
+        if pinned[key].isdigit():
+            r.ok(int(pinned[key]) in cluster, "run", "%s CPU %s is in the board's %s cluster (%s)" % (label, pinned[key], label, board.get(key)),
+                 "%s CPU %s is not in the board's %s cluster (%r)" % (label, pinned[key], label, board.get(key)))
+    os_info, tool = meta.get("os") or {}, meta.get("toolchain") or {}
+    r.ok(bool(os_info.get("kernel")), "run", "kernel %s" % os_info.get("kernel"), "metadata.json records no kernel release")
+    r.ok(bool(tool.get("gcc") or tool.get("cmake")), "run", "toolchain recorded", "metadata.json records no toolchain")
 
     # ---------------------------------------------------------------- benchmark
     flags = (d / "cmake-flags.txt").read_text(errors="replace") if (d / "cmake-flags.txt").exists() else ""
@@ -122,6 +142,20 @@ def verify(d, commit=None):
         m = doc.get("metadata") or {}
         r.ok(m.get("commit") == sha, "benchmark", "%s JSON commit matches" % label, "%s JSON commit %r != %s" % (label, m.get("commit"), sha[:12]))
         r.ok(m.get("label") == label, "benchmark", "%s JSON label" % label, "%s JSON label %r" % (label, m.get("label")))
+        r.ok(bool(m.get("compiler")), "benchmark", "%s compiler %s" % (label, m.get("compiler")), "%s JSON records no compiler" % label)
+        r.ok(m.get("arch") in ("aarch64", "arm64"), "benchmark", "%s built for %s" % (label, m.get("arch")),
+             "%s JSON arch %r: not a 64-bit ARM build (artifact from another machine?)" % (label, m.get("arch")))
+        build = []
+        if not m.get("optimized"):
+            build.append("not an optimised build (build type %s)" % m.get("build_type"))
+        if m.get("assertions"):
+            build.append("assertions enabled")
+        if m.get("max_freq_khz") is None or (m.get("before") or {}).get("cur_freq_khz") is None:
+            build.append("CPU frequency unreadable")
+        if not [t for t in (m.get("before") or {}).get("thermal") or [] if t.get("milli_c") is not None]:
+            build.append("no thermal zone readable")
+        r.ok(not build, "baseline", "%s: optimised build, frequency and temperature recorded" % label,
+             "%s: indicative only: %s" % (label, "; ".join(build)), level="WARN")
         r.ok(str(m.get("pinned_cpu")) == pinned[key], "benchmark", "%s pinned to CPU %s as the preflight chose" % (label, pinned[key]),
              "%s pinned_cpu %r, the preflight chose %s" % (label, m.get("pinned_cpu"), pinned[key]))
         if m.get("core") is None:
@@ -169,20 +203,36 @@ def verify(d, commit=None):
             if names is not None:
                 probes = [n for n in names if n.endswith(("/v4l2/receiver/stream.txt", "/v4l2/receiver/expbuf.txt"))]
                 if expbuf:
-                    r.ok(any(n.endswith("/expbuf.txt") for n in names), "probe", "EXPBUF probe result present (expbuf enabled)",
-                         "expbuf was enabled but the bundle has no EXPBUF result")
+                    result = None
+                    member = next((n for n in names if n.endswith("/v4l2/receiver/expbuf.txt")), None)
+                    if member:
+                        with tarfile.open(ev[0]) as t:
+                            text = t.extractfile(member).read().decode("utf-8", "replace")
+                        result = (re.findall(r"^expbuf=(.*)$", text, re.M) or [text.strip()[:60] or "empty"])[-1]
+                    if not member:
+                        r.add("FAIL", "probe", "expbuf was enabled but the bundle has no EXPBUF result")
+                    elif result == "ok":
+                        r.add("PASS", "probe", "EXPBUF succeeded (expbuf=ok)")
+                    else:
+                        r.add("WARN", "probe", "EXPBUF probe did not succeed (%s): this run is not EXPBUF evidence" % result)
                 else:
                     r.ok(not probes, "probe", "read-only: no stream or EXPBUF probe in the bundle (expbuf disabled)",
                          "expbuf disabled but the bundle contains %s" % ", ".join(probes))
+                    r.add("WARN", "probe", "EXPBUF not tested (read-only probe): this run is not EXPBUF evidence")
     elif archives:
         r.add("WARN", "probe", "tests stage with archives present: %s" % ", ".join(sorted(archives)))
 
     # ---------------------------------------------------------------- privacy
     leaks = []
+    names = [n for n in (hostname, user) if n]
+    named = re.compile(r"\b(%s)\b" % "|".join(re.escape(n) for n in names), re.I) if names else None
     for p in sorted(d.rglob("*")):
         if p.is_file() and not p.name.endswith(".tar.gz"):
-            if SECRET.search(p.read_text(errors="replace")):
+            text = p.read_text(errors="replace")
+            if SECRET.search(text):
                 leaks.append(p.name)
+            elif named and named.search(text):
+                leaks.append("%s (host or user name)" % p.name)
     for name, p in sorted(archives.items()):
         try:
             with tarfile.open(p) as t:
@@ -192,11 +242,14 @@ def verify(d, commit=None):
                     text = t.extractfile(m).read().decode("utf-8", "replace")
                     if SECRET.search(text):
                         leaks.append("%s:%s (secret)" % (name, m.name))
-                    elif IPV4.search(text) or MAC.search(text):
+                    elif IPV4.search(text) or IPV6.search(text) or MAC.search(text):
                         leaks.append("%s:%s (address)" % (name, m.name))
+                    elif named and named.search(text + " " + m.name):
+                        leaks.append("%s:%s (host or user name)" % (name, m.name))
         except (tarfile.TarError, OSError):
             pass
-    r.ok(not leaks, "privacy", "no tokens, keys or unredacted addresses found", "review before sharing: %s" % ", ".join(leaks[:10]))
+    r.ok(not leaks, "privacy", "no tokens, keys or unredacted addresses found%s" % ("" if names else " (host and user names not checked: pass --hostname/--user)"),
+         "review before sharing: %s" % ", ".join(leaks[:10]))
     return r
 
 
@@ -204,13 +257,15 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("dir")
     ap.add_argument("--commit")
+    ap.add_argument("--hostname", help="runner host name that must not appear in the artifact")
+    ap.add_argument("--user", help="user name that must not appear in the artifact")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     d = pathlib.Path(a.dir)
     if not d.is_dir():
         print("verify-board-artifact: %s is not a directory (unzip the artifact first)" % d, file=sys.stderr)
         return 2
-    r = verify(d, a.commit)
+    r = verify(d, a.commit, a.hostname, a.user)
     if a.json:
         print(json.dumps({"failed": r.failed(), "checks": r.items}, indent=1))
     else:

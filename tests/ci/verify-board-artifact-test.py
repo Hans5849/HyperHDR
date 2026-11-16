@@ -11,6 +11,7 @@ FAIL (or a WARN where the numbers stay usable but aren't a baseline).
 import copy
 import io
 import json
+import re
 import pathlib
 import shutil
 import subprocess
@@ -36,6 +37,8 @@ def three_patterns(doc):
     solid = [dict(c, pattern="solid", scenario=c["scenario"].replace("-gradient", "-solid")) for c in d["cases"] if c["pattern"] == "gradient"]
     d["cases"] += solid
     d["metadata"]["commit"] = SHA
+    # As built on the board: optimised Release build for 64-bit ARM
+    d["metadata"].update(arch="aarch64", optimized=True, assertions=False, build_type="Release")
     return d
 
 
@@ -48,7 +51,7 @@ def tar_gz(path, root, files):
             t.addfile(info, io.BytesIO(data))
 
 
-def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None):
+def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None, expbuf_text="open=ok\nreqbufs=4\nexpbuf=ok\n"):
     d = base / ("artifact-%s" % stage)
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
@@ -59,7 +62,7 @@ def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None):
         "board": {"model": "Xunlong Orange Pi 5 Plus", "compatible": "xunlong,orangepi-5-plus", "a55": "0 1 2 3", "a76": "4 5 6 7",
                   "receiver": "/dev/video3", "receiver_driver": "snps_hdmirx"},
         "runner": {"container": True, "allowed_cpus": "0-7", "pinned_a55": "0", "pinned_a76": "4"},
-        "os": {}, "toolchain": {}}))
+        "os": {"kernel": "6.1.115-vendor-rk35xx"}, "toolchain": {"gcc": "g++ 12.2.0", "cmake": "cmake 3.25.1"}}))
     (d / "cmake-flags.txt").write_text("codec_test: cmake -DPLATFORM=linux\nbenchmark executable: build-codec/bin/DecoderTest\n")
     for key, label in (("a76", "A76"), ("a55", "A55")):
         doc = three_patterns(json.loads((sample / ("bgr24-bench-%s.json" % key)).read_text()))
@@ -70,7 +73,7 @@ def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None):
     if stage == "probe":
         files = {"summary.txt": "receiver: /dev/video3\nhost <host> at <ipv4> mac <mac>\n"}
         if expbuf:
-            files["v4l2/receiver/expbuf.txt"] = "open=ok\nreqbufs=4\nexpbuf=ok\n"
+            files["v4l2/receiver/expbuf.txt"] = expbuf_text
         files.update(evidence_extra or {})
         tar_gz(d / "rk3588-evidence-20261116T120000Z.tar.gz", "rk3588-evidence-20261116T120000Z", files)
         tar_gz(d / "hyperhdr-doctor-20261116T120001Z.tar.gz", "hyperhdr-doctor-20261116T120001Z", {"report.txt": "service ok on <host>\n"})
@@ -80,7 +83,11 @@ def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None):
 
 
 def run(d, *extra):
-    return subprocess.run([sys.executable, str(SCRIPT), *extra, str(d)], capture_output=True, text=True)
+    """Runs the verifier; stdout has runs of spaces collapsed, so expectations
+    don't depend on the report's column widths."""
+    r = subprocess.run([sys.executable, str(SCRIPT), *extra, str(d)], capture_output=True, text=True)
+    r.stdout = re.sub(r" +", " ", r.stdout)
+    return r
 
 
 def edit_json(path, fn):
@@ -96,7 +103,7 @@ with tempfile.TemporaryDirectory() as tmp:
     good = artifact(base, sample)
     r = run(good)
     check(r.returncode == 0 and "RESULT: OK" in r.stdout and " 0 fail" in r.stdout, "complete tests-stage artifact: OK")
-    check("WARN baseline  A55: indicative only, not a baseline: governor unknown" in r.stdout,
+    check("WARN baseline A55: indicative only, not a baseline: governor unknown" in r.stdout,
           "A55 sample without a governor: WARN not a baseline (the results stay usable)")
     check("PASS benchmark A76: 24 cases, every summary recomputed from raw samples" in r.stdout, "raw samples recomputed for 24 cases")
     check(run(good, "--commit", SHA[:12]).returncode == 0, "--commit prefix matches")
@@ -105,10 +112,10 @@ with tempfile.TemporaryDirectory() as tmp:
     js = json.loads(run(good, "--json").stdout)
     check(js["failed"] is False and all({"level", "area", "message"} <= set(c) for c in js["checks"]), "--json output")
 
-    def broken(desc, mutate, expect, stage="tests", expbuf=False, evidence_extra=None, code=1):
-        d = artifact(base, sample, stage, expbuf, evidence_extra)
+    def broken(desc, mutate, expect, stage="tests", expbuf=False, evidence_extra=None, code=1, args=(), **kw):
+        d = artifact(base, sample, stage, expbuf, evidence_extra, **kw)
         mutate(d)
-        r = run(d)
+        r = run(d, *args)
         ok = r.returncode == code and expect in r.stdout
         check(ok, desc)
         if not ok:
@@ -142,7 +149,7 @@ with tempfile.TemporaryDirectory() as tmp:
     r = run(good_probe)
     check(r.returncode == 0 and "read-only: no stream or EXPBUF probe in the bundle (expbuf disabled)" in r.stdout, "probe stage, expbuf off: OK and read-only")
     r = run(artifact(base, sample, "probe", expbuf=True))
-    check(r.returncode == 0 and "EXPBUF probe result present" in r.stdout and "WARN run" in r.stdout, "probe with expbuf: OK, with a WARN naming the attestation")
+    check(r.returncode == 0 and "EXPBUF succeeded (expbuf=ok)" in r.stdout and "WARN run" in r.stdout, "probe with expbuf: OK, with a WARN naming the attestation")
     broken("expbuf disabled but a stream probe in the bundle: FAIL", lambda d: None, "expbuf disabled but the bundle contains",
            stage="probe", evidence_extra={"v4l2/receiver/stream.txt": "frames\n"})
     broken("evidence archive missing: FAIL", lambda d: [p.unlink() for p in d.glob("rk3588-evidence-*.tar.gz")], "expected one rk3588-evidence-*.tar.gz, found 0", stage="probe")
@@ -150,6 +157,41 @@ with tempfile.TemporaryDirectory() as tmp:
     broken("unredacted address in the evidence bundle: FAIL", lambda d: None, "review before sharing: rk3588-evidence-",
            stage="probe", evidence_extra={"network.txt": "wled at 192.168.1.40\n"})
     broken("receiver-signal.txt missing: FAIL", lambda d: (d / "receiver-signal.txt").unlink(), "receiver-signal.txt missing", stage="probe")
+
+    # Review additions (2026-11-16): cluster, provenance, build, EXPBUF result, privacy
+    r = run(good)
+    check("WARN run commit not compared with an approved SHA" in r.stdout, "no --commit: WARN that the commit wasn't compared")
+    check("PASS run A76 CPU 4 is in the board's A76 cluster (4 5 6 7)" in r.stdout and "PASS run A55 CPU 0 is in the board's A55 cluster" in r.stdout,
+          "pinned CPUs checked against the board's clusters")
+    broken("A76 run pinned to an A55 core (preflight and JSON agree): FAIL",
+           lambda d: (edit_json(d / "metadata.json", lambda m: m["runner"].update(pinned_a76="1")),
+                      edit_json(d / "bgr24-bench-a76.json", lambda j: j["metadata"].update(pinned_cpu=1, core=None))),
+           "A76 CPU 1 is not in the board's A76 cluster")
+    broken("no compiler recorded: FAIL", lambda d: edit_json(d / "bgr24-bench-a55.json", lambda j: j["metadata"].update(compiler=None)), "A55 JSON records no compiler")
+    broken("x86_64 build: FAIL", lambda d: edit_json(d / "bgr24-bench-a76.json", lambda j: j["metadata"].update(arch="x86_64")),
+           "not a 64-bit ARM build")
+    broken("no kernel recorded: FAIL", lambda d: edit_json(d / "metadata.json", lambda m: m.update(os={})), "metadata.json records no kernel release")
+    broken("unoptimised build with assertions: WARN only",
+           lambda d: edit_json(d / "bgr24-bench-a76.json", lambda j: j["metadata"].update(optimized=False, assertions=True, build_type="Debug")),
+           "A76: indicative only: not an optimised build (build type Debug); assertions enabled", code=0)
+    broken("no readable thermal zone: WARN only",
+           lambda d: edit_json(d / "bgr24-bench-a76.json", lambda j: j["metadata"]["before"].update(thermal=[])), "no thermal zone readable", code=0)
+    r = run(artifact(base, sample, "probe"))
+    check("WARN probe EXPBUF not tested (read-only probe): this run is not EXPBUF evidence" in r.stdout and "EXPBUF succeeded" not in r.stdout,
+          "read-only probe says EXPBUF was not tested")
+    r = run(artifact(base, sample, "probe", expbuf=True))
+    check(r.returncode == 0 and "PASS probe EXPBUF succeeded (expbuf=ok)" in r.stdout, "expbuf=ok: EXPBUF succeeded")
+    r = run(artifact(base, sample, "probe", expbuf=True, expbuf_text="open=ok\nreqbufs=4\nexpbuf=Device or resource busy\n"))
+    check(r.returncode == 0 and "WARN probe EXPBUF probe did not succeed (Device or resource busy): this run is not EXPBUF evidence" in r.stdout
+          and "EXPBUF succeeded" not in r.stdout, "EXPBUF failed (EBUSY): WARN, never reported as EXPBUF evidence")
+    r = run(artifact(base, sample, "probe", expbuf=True, expbuf_text="[cc not installed]\n"))
+    check("EXPBUF probe did not succeed ([cc not installed])" in r.stdout, "EXPBUF probe not built: WARN")
+    broken("unredacted IPv6 address in the evidence bundle: FAIL", lambda d: None, "review before sharing: rk3588-evidence-",
+           stage="probe", evidence_extra={"net.txt": "link fe80::1c2a:3bff:fe4d:5e6f dev eth0\n"})
+    broken("runner host name in a result file (--hostname): FAIL", lambda d: (d / "doctor.txt").write_text("service on opi5plus-hyperhdr-01\n"),
+           "doctor.txt (host or user name)", stage="probe", args=("--hostname", "opi5plus-hyperhdr-01"))
+    r = run(artifact(base, sample, "probe"), "--hostname", "opi5plus-hyperhdr-01", "--user", "ryan")
+    check(r.returncode == 0 and "host and user names not checked" not in r.stdout, "clean artifact with --hostname/--user: OK")
 
     r = subprocess.run([sys.executable, str(SCRIPT), str(base / "nope")], capture_output=True, text=True)
     check(r.returncode == 2 and "unzip the artifact first" in r.stderr, "not a directory: exit 2")
