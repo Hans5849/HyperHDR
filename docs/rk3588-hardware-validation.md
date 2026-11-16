@@ -211,6 +211,7 @@ Started
 | `timeout:` | Streaming, but no complete frame for 5 s while the receiver does not report a missing signal | Restart with 3 s to 30 s backoff |
 | `initialization failed:` | Discovery, open, format negotiation or buffer setup failed | Restart with backoff |
 | `streaming failed:` | STREAMON, QBUF or DQBUF failure, invalid payloads, repeated short frames | Restart with backoff |
+| `streaming failed: decoding:` | Buffers keep arriving but at least 30 consecutive frames failed to decode over at least 5 s. Isolated decode errors (a corrupt MJPEG frame) never restart | Restart with backoff. After a decode restart only a successfully decoded frame counts as recovery, so repeated failures back off 3 → 30 s |
 | `source changed:` | Source-change event while streaming | Fast restart (500 ms) |
 
 Each category is logged as a warning once per outage (as info for `no signal` and
@@ -222,6 +223,11 @@ cancels both pending retries and the signal wait.
 
 None of the following has been run. Do not mark any item as passed without
 captured evidence (logs, screenshots, measurements).
+
+The [operator checklist](rk3588-operator-checklist.md) turns these into a run
+sheet: each step is classed as safe while HyperHDR runs, needing exclusive
+receiver access, or user-visible, with commands, expected log lines and pass
+criteria.
 
 1. Real signal detection and format negotiation: logs show the detected timing,
    BGR24, stride, one plane and quantization.

@@ -159,7 +159,12 @@ int main(int argc, char* argv[]) {
 	QCoreApplication app(argc, argv);
 	if (app.arguments().contains("--bgr24-check")) return checkBgr24Decoder();
 	if (app.arguments().contains("--color-quality")) return checkColorQuality();
-	if (app.arguments().contains("--bgr24-bench")) return benchBgr24Decoder();
+	if (app.arguments().contains("--bgr24-bench"))
+	{
+		std::vector<std::string> args;
+		for (const auto& a : app.arguments().mid(1)) args.push_back(a.toStdString());
+		return benchBgr24Decoder(BenchReport::parseOptions(args));
+	}
 	QTextStream out(stdout);
 
 	auto fmtCell = [](const QString& text, int width) {

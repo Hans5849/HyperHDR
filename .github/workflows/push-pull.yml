@@ -60,6 +60,25 @@ jobs:
           cmake --build build-codec -j --target DecoderTest
           ctest --test-dir build-codec --output-on-failure
 
+      - name: BGR24 benchmark reporting (statistics, metadata, JSON/CSV, summarizer)
+        run: |
+          cmake -S tests/bench_report -B build-bench-report -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-bench-report -j
+          ctest --test-dir build-bench-report --output-on-failure
+          build-bench-report/bench-report-test --emit-sample build-bench-report/sample
+          python3 tests/ci/bench-summarize-test.py build-bench-report/sample
+          # The real DecoderTest (built in the previous step): default output keeps
+          # the original header, and its JSON passes the summarizer's raw-sample check.
+          build-codec/bin/DecoderTest --bgr24-bench --iterations 2 --warmup 1 >build-bench-report/default.txt
+          head -1 build-bench-report/default.txt | grep -qx 'BGR24 decode 1920x1080 stride 5760: 2 timed runs per case after 1 warm-up (ms)'
+          sed -n 2p build-bench-report/default.txt | grep -q '^range    output   lut      median        p95        min$'
+          if grep -q 'input pattern' build-bench-report/default.txt; then echo '::error::default output changed'; exit 1; fi
+          build-codec/bin/DecoderTest --bgr24-bench --iterations 3 --warmup 1 --pattern random,solid --raw \
+            --json build-bench-report/decoder.json --csv build-bench-report/decoder.csv --commit "$GITHUB_SHA" --label hosted
+          python3 scripts/rk3588/bench-summarize.py build-bench-report/decoder.json
+          test "$(wc -l <build-bench-report/decoder.csv)" -eq 17
+          if build-codec/bin/DecoderTest --bgr24-bench --jsn x; then echo '::error::unknown benchmark option accepted'; exit 1; fi
+
       - name: Command-line parser tests (no Qt option warnings)
         run: |
           cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"

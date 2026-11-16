@@ -706,6 +706,8 @@ add_executable(DecoderTest
 target_link_libraries(DecoderTest
 	Qt${Qt_VERSION}::Core
 )
+# Recorded in --bgr24-bench JSON/CSV output (empty for multi-config generators).
+target_compile_definitions(DecoderTest PRIVATE HYPERHDR_BENCH_BUILD_TYPE="${CMAKE_BUILD_TYPE}")
 
 # generate test images
 find_package(Python3 COMPONENTS Interpreter)
