@@ -46,6 +46,7 @@ ProviderUdp::ProviderUdp(const QJsonObject& deviceConfig)
 	, _port(1)
 	, _defaultHost("127.0.0.1")
 {
+	_outputStats.countPackets();
 }
 
 ProviderUdp::~ProviderUdp() = default;
@@ -165,8 +166,10 @@ int ProviderUdp::writeBytes(const unsigned size, const uint8_t* data)
 {
 	int rc = 0;
 	qint64 bytesWritten = _udpSocket->writeDatagram(reinterpret_cast<const char*>(data), size, _address, _port);
+	const bool accepted = (bytesWritten != -1 && bytesWritten == size);
+	_outputStats.packet(size, accepted);
 
-	if (bytesWritten == -1 || bytesWritten != size)
+	if (!accepted)
 	{
 		Warning(_log, "{:s}", (QString("(%1:%2) Write Error: (%3) %4").arg(_address.toString()).arg(_port).arg(_udpSocket->error()).arg(_udpSocket->errorString())));
 		rc = -1;
@@ -178,8 +181,10 @@ int ProviderUdp::writeBytes(const QByteArray& bytes)
 {
 	int rc = 0;
 	qint64 bytesWritten = _udpSocket->writeDatagram(bytes, _address, _port);
+	const bool accepted = (bytesWritten != -1 && bytesWritten == bytes.size());
+	_outputStats.packet(static_cast<uint64_t>(bytes.size()), accepted);
 
-	if (bytesWritten == -1 || bytesWritten != bytes.size())
+	if (!accepted)
 	{
 		Warning(_log, "{:s}", (QString("(%1:%2) Write Error: (%3) %4").arg(_address.toString()).arg(_port).arg(_udpSocket->error()).arg(_udpSocket->errorString())));
 		rc = -1;

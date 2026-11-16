@@ -10,7 +10,7 @@ measure.
 | **Accepted** | A captured frame handed to a decode worker. Captured frames that aren't accepted are discarded for one recorded reason: driver error, short payload, software decimation (a setting, not a loss), undersized, workers inactive, LUT loading, or no idle worker. | `accepted` (#32) | Decoded: acceptance only means a worker started. |
 | **Decoded** | The worker produced an RGB image (BGR24 → RGB, range expansion, optional LUT, crop or quarter). Otherwise the frame **failed to decode**, or was **abandoned** because capture restarted while it was in the worker. | `decoded`, `decodeFailed`, `abandoned` (#32, #34). Accept → decoded duration percentiles (#32). | The existing Performance page's "average frame time", which uses a millisecond clock and covers a different interval. |
 | **Processed** | The decoded image reached HyperHDR's image processing (LED colour calculation). | Not counted separately. | — |
-| **LED output** | An LED update sent by the LED driver (for WLED, one or more DDP packets). | Upstream's Performance page reports, per LED device, updates received and written and an estimate of missed refreshes. It doesn't link an LED update to the captured frame it came from, because smoothing can send LED updates on its own timer. | Captured or decoded frame rates. "N fps captured" is not "N LED updates per second from N frames". |
+| **LED output** | An LED update written by the LED driver: one logical output group, sent as one or more UDP packets (DDP splits large updates). | `LED output stats` log line per LED device: presented, updates (new colours vs repeats), failed, packets per update, socket rejections ([LED output statistics](led-output-stats.md)). Upstream's Performance page also reports per-device writes and an estimate of missed refreshes. Neither links an LED update to the captured frame it came from: smoothing sends LED updates on its own clock. | Captured or decoded frame rates. "N fps captured" is not "N LED updates per second from N frames". Packets are not frames. A packet accepted by the local socket is not light from the LEDs. |
 
 ## What has and hasn't been measured
 
@@ -21,8 +21,12 @@ measure.
   on the board.
 - **Not measured:**
   - HDMI-input-to-LED latency (end to end)
-  - DDP send timing
-  - WLED output rate or colour accuracy
+  - DDP send timing per update
+  - whether the controller received or displayed an update (UDP has no
+    acknowledgement), WLED's own frame rate, or colour accuracy
+
+  The LED output *rate* is counted (updates and packets handed to the socket,
+  see [LED output statistics](led-output-stats.md)), but not yet on the board.
   - any optical latency
 
   No document should claim these until a frame identifier is carried from capture

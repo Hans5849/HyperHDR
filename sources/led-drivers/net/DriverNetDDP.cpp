@@ -26,6 +26,7 @@
  */
 
 #include <led-drivers/net/DriverNetDDP.h>
+#include <led-drivers/net/DdpPacketizer.h>
 #include <infinite-color-engine/ColorSpace.h>
 
 #include <QtEndian>
@@ -143,47 +144,14 @@ int DriverNetDDP::writeFiniteColors(bool isRgbw, const int ledsNumber, const std
 	}
 
 	const size_t colorSize = (isRgbw) ? 4 : 3;
-	const size_t maxLedsInFrame = (isRgbw) ? 360 : 480;
 	const uint8_t* start = (isRgbw) ? _rgbwBuffer.data() : reinterpret_cast<const uint8_t*>(ledValues.data());
-	const uint8_t* end = start + ledsNumber * colorSize;
-	uint32_t colorOffset = 0;
-	constexpr size_t ddpHeaderOverhead = 10;
-	const size_t maxColorsInUdpFrame = maxLedsInFrame * colorSize;
-
-	size_t realRgbSize = std::min<size_t>(end - start, maxColorsInUdpFrame);
-	
-	_ddpFrame.reserve(realRgbSize + ddpHeaderOverhead);
+	const size_t bytes = static_cast<size_t>(ledsNumber) * colorSize;
 	sequenceNum = (sequenceNum % 0x0F) + 1;
 
-	while (start < end)
-	{		
-		realRgbSize = std::min<size_t>(end - start, maxColorsInUdpFrame);
-		_ddpFrame.resize(realRgbSize + ddpHeaderOverhead, 0);
-
-		bool isLast = (start + realRgbSize >= end);
-
-		// Bajt 0: Flags (V1: 0x40 | Push: 0x01 = 0x41)
-		_ddpFrame[0] = (isLast) ? 0x41 : 0x40;
-		// Bajt 1: Sequence (0x00-0x0F)		
-		_ddpFrame[1] = sequenceNum;
-		// Bajt 2: Data Type (RGB = 0x0B, RGBW = 0x1B)
-		_ddpFrame[2] = (isRgbw) ? 0x1B : 0x0B;
-		// Bajt 3: Destination ID
-		_ddpFrame[3] = 0x01;
-
-		// offset in byte
-		qToBigEndian<uint32_t>(colorOffset, &_ddpFrame[4]);
-
-		// color data size in byte
-		qToBigEndian<uint16_t>(static_cast<uint16_t>(realRgbSize), &_ddpFrame[8]);
-
-		memcpy(_ddpFrame.data() + ddpHeaderOverhead, start, realRgbSize);
-		start += realRgbSize;
-		colorOffset += static_cast<uint32_t>(realRgbSize);
-
-		// send UDP frame
-		writeBytes(static_cast<int>(_ddpFrame.size()), _ddpFrame.data());
-	}
+	// One logical DDP frame, split into as many UDP packets as needed
+	// (DdpPacketizer.h). Packet results are counted by ProviderUdp::writeBytes.
+	Ddp::sendFrame(start, bytes, isRgbw, sequenceNum, _ddpFrame,
+		[this](const uint8_t* datagram, size_t size) { writeBytes(static_cast<unsigned>(size), datagram); });
 
 	return static_cast<int>(ledsNumber);
 }

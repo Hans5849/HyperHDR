@@ -165,7 +165,7 @@ void testUnavailableIsNotZero()
 	const auto line = Stats::format(s, 60.0);
 	REQUIRE(line.find("missed by driver sequence n/a") != std::string::npos);
 	REQUIRE(line.find("p50/p95/p99 n/a/n/a/n/a ms") != std::string::npos);
-	REQUIRE(line.find("LED output rate n/a, DDP timing n/a") != std::string::npos);
+	REQUIRE(line.find("LED output: see \"LED output stats\"; capture-to-LED latency n/a (not instrumented)") != std::string::npos);
 	Sim healthy; healthy.frame(0); healthy.frame(1); healthy.st.decoded(2000);
 	const auto line2 = Stats::format(healthy.st.snapshot(true), 60.0);
 	REQUIRE(line2.find("missed by driver sequence 0;") != std::string::npos);   // a real zero is printed as 0

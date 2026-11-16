@@ -23,6 +23,7 @@
 #include <utils/Logger.h>
 #include <utils/Components.h>
 #include <led-drivers/ColorRgbw.h>
+#include <led-drivers/LedOutputStats.h>
 #include <performance-counters/PerformanceCounters.h>
 #include <infinite-color-engine/SharedOutputColors.h>
 #include <base/LedString.h>
@@ -109,6 +110,9 @@ protected:
 	std::vector<uint8_t> _ledBuffer;
 	QTimer* _refreshTimer;
 
+	// LED output counters (issue #9, LedOutputStats.h). ProviderUdp counts packets.
+	LedOutput::Stats _outputStats;
+
 	LedString::ColorOrder _colorOrder;
 	int _currentInterval;
 	int _defaultInterval;
@@ -144,6 +148,11 @@ protected slots:
 private:
 	void stopRefreshTimer();
 	void stopRetryTimer();
+	void startOutputStats();
+	void stopOutputStats(const std::string& context);
+	void reportOutputStats(const std::string& context);
+
+	QTimer* _outputStatsTimer = nullptr;
 
 	std::atomic_bool	_isRefreshEnabled;
 	std::atomic_bool	_newFrame2Send;

@@ -34,8 +34,9 @@
 //
 // "Unavailable" is not "zero": percentiles are absent without samples, and the
 // sequence gap count is absent until the driver's sequence number has been seen to
-// change (some drivers always report 0). Metrics that aren't instrumented (LED
-// output rate, DDP timing) are reported as unavailable, never as 0.
+// change (some drivers always report 0). Metrics that aren't instrumented
+// (capture-to-LED latency) are reported as unavailable, never as 0. The LED output
+// rate is counted per LED device (led-drivers/LedOutputStats.h), not here.
 //
 // Counters are relaxed atomics: increments are a few nanoseconds, nothing
 // allocates, memory is fixed, and a snapshot may be taken from another thread.
@@ -275,7 +276,7 @@ public:
 			"; accept->decoded p50/p95/p99 " + ms(s.p50Us) + "/" + ms(s.p95Us) + "/" + ms(s.p99Us) + " ms (" + std::to_string(s.durationSamples) +
 			" samples); restarts " + std::to_string(s.restarts) + ", sequence resets " + std::to_string(s.sequenceResets) +
 			", duplicate sequences " + std::to_string(s.duplicateSequences) +
-			"; LED output rate n/a, DDP timing n/a (not instrumented)";
+			"; LED output: see \"LED output stats\"; capture-to-LED latency n/a (not instrumented)";
 		if (!s.consistent()) out += "; ACCOUNTING MISMATCH";
 		return out;
 	}
