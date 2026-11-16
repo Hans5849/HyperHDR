@@ -201,7 +201,8 @@ approve the environment when prompted:
 1. **`stage: tests`.** Preflight, sanitizer suites natively on ARM64, the A76 and
    A55 BGR24 benchmark, and the preflight test. Attach the artifact's
    `bgr24-bench-a76.txt`, `bgr24-bench-a55.txt`, `metadata.json` and
-   `cmake-flags.txt` to #12 and #9. The benchmark runs
+   `cmake-flags.txt` to #12 and #9, together with `bgr24-bench-summary.md` and the
+   `bgr24-bench-{a76,a55}.json` raw data (see `rk3588-benchmark-reporting.md`). The benchmark runs
    `build-codec/bin/DecoderTest` (where CMake writes it); a missing or
    non-executable binary or a non-zero benchmark exit fails the job.
 2. **`stage: probe`.** Adds the receiver requirement, the diagnostics doctor (#27)
