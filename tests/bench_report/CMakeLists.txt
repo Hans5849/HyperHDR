@@ -9,6 +9,7 @@ add_compile_options(-Wall -Wextra -Werror)
 
 add_executable(bench-report-test main.cpp)
 target_include_directories(bench-report-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../codec_test ${CMAKE_CURRENT_SOURCE_DIR}/../../include)
+target_compile_definitions(bench-report-test PRIVATE BENCH_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 enable_testing()
 add_test(NAME bench-report COMMAND bench-report-test)

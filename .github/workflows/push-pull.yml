@@ -78,6 +78,31 @@ jobs:
           python3 scripts/rk3588/bench-summarize.py build-bench-report/decoder.json
           test "$(wc -l <build-bench-report/decoder.csv)" -eq 17
           if build-codec/bin/DecoderTest --bgr24-bench --jsn x; then echo '::error::unknown benchmark option accepted'; exit 1; fi
+          # JSON specification: field names, types, units, null vs zero, counts,
+          # recomputed statistics and ordering, on the C++ sample and the real output.
+          python3 tests/ci/bench-validate-test.py build-bench-report/sample
+          python3 scripts/rk3588/bench-validate.py --iterations 3 --warmup 1 --patterns random,solid --raw build-bench-report/decoder.json
+          # Saved raw-frame input (synthetic fixtures; no capture device is opened).
+          python3 tests/bench_report/fixtures/make-fixtures.py --check
+          for f in scene-64x36-padded scene-64x36-tight; do
+            build-codec/bin/DecoderTest --bgr24-bench --iterations 3 --warmup 1 --raw \
+              --input tests/bench_report/fixtures/$f.bgr24 --input-desc tests/bench_report/fixtures/$f.desc \
+              --json build-bench-report/$f.json --commit "$GITHUB_SHA" --label hosted >build-bench-report/$f.txt
+            grep -q "^input file: $f.bgr24 sha256 " build-bench-report/$f.txt
+            python3 scripts/rk3588/bench-validate.py --iterations 3 --warmup 1 --raw \
+              --input-sha256 "$(sha256sum tests/bench_report/fixtures/$f.bgr24 | cut -d' ' -f1)" build-bench-report/$f.json
+          done
+          python3 scripts/rk3588/bench-summarize.py build-bench-report/scene-64x36-padded.json build-bench-report/scene-64x36-tight.json
+          # Rejected inputs exit 2 without timing anything.
+          head -c 6000 tests/bench_report/fixtures/scene-64x36-tight.bgr24 >build-bench-report/short.bgr24
+          set +e
+          build-codec/bin/DecoderTest --bgr24-bench --input build-bench-report/short.bgr24 --input-desc tests/bench_report/fixtures/scene-64x36-tight.desc 2>build-bench-report/short.err
+          status=$?
+          build-codec/bin/DecoderTest --bgr24-bench --input tests/bench_report/fixtures/scene-64x36-tight.bgr24 --input-desc tests/bench_report/fixtures/scene-64x36-tight.desc --pattern solid 2>build-bench-report/both.err
+          both=$?
+          set -e
+          test "$status" -eq 2 && grep -q "short file" build-bench-report/short.err
+          test "$both" -eq 2 && grep -q -- "--input replaces --pattern" build-bench-report/both.err
 
       - name: Command-line parser tests (no Qt option warnings)
         run: |

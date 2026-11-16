@@ -6,6 +6,7 @@
 //   bench-report-test --emit-sample D  also write a synthetic sample run to D
 //                                      (consumed by tests/ci/bench-summarize-test.py)
 #include "BenchReport.h"
+#include "RawFrameInput.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -132,6 +133,114 @@ static void options()
 	CHECK(parseOptions({ "--iterations", "0", "--pattern", "noise" }).error == "invalid --iterations: 0");
 	CHECK(!parseOptions({ "--json" }).error.empty());              // missing value
 	CHECK(!parseOptions({ "--commit", "" }).commit);               // empty commit is missing, not ""
+
+	// --input needs its description, replaces the synthetic patterns, and can't
+	// be combined with --pattern
+	auto in = parseOptions({ "--bgr24-bench", "--input", "f.bgr24", "--input-desc=f.desc" });
+	CHECK(in.error.empty() && in.inputPath == "f.bgr24" && in.inputDescription == "f.desc" && in.patterns.empty());
+	CHECK(parseOptions({ "--input", "f.bgr24" }).error == "--input and --input-desc must be given together");
+	CHECK(parseOptions({ "--input-desc", "f.desc" }).error == "--input and --input-desc must be given together");
+	CHECK(parseOptions({ "--input", "f", "--input-desc", "d", "--pattern", "random" }).error == "--input replaces --pattern; give one or the other");
+}
+
+static const char* validDescription =
+	"# hyperhdr raw frame description, version 1\n"
+	"format = BGR24\nwidth = 4\nheight = 3\nstride = 16\nrange = limited\norientation = top-down\npayload = 48\n";
+
+static std::string describe(const std::string& key, const std::string& value)
+{
+	std::string d = validDescription;
+	const auto at = d.find("\n" + key + " = ");
+	if (at == std::string::npos) return d + key + " = " + value + "\n";
+	const auto end = d.find('\n', at + 1);
+	return d.substr(0, at + 1) + (value.empty() ? "" : key + " = " + value) + d.substr(end + (value.empty() ? 1 : 0));
+}
+
+static void rawFrames(const fs::path& tmp)
+{
+	using namespace RawFrame;
+	// SHA-256 against the FIPS 180-4 / NIST example vectors
+	CHECK(sha256({}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+	CHECK(sha256({ 'a', 'b', 'c' }) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+	const std::string two = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";   // two-block message
+	CHECK(sha256(std::vector<uint8_t>(two.begin(), two.end())) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+
+	// A valid description: 4x3 BGR24, stride 16 (4 padding bytes per row)
+	auto ok = parseDescription(validDescription);
+	CHECK(ok.description && ok.error.empty());
+	CHECK(ok.description->minimumPayload() == 2u * 16u + 12u && ok.description->paddedPayload() == 48u);
+	CHECK(!ok.description->source);
+	CHECK(parseDescription(describe("payload", "44")).description);   // unpadded last row is accepted too
+
+	// Every property is stated, never guessed; anything inconsistent is rejected
+	CHECK(parseDescription(describe("format", "")).error == "missing key 'format'");
+	CHECK(parseDescription(describe("format", "NV12")).error == "unsupported format 'NV12' (only BGR24)");
+	CHECK(parseDescription(describe("orientation", "bottom-up")).error == "unsupported orientation 'bottom-up' (only top-down)");
+	CHECK(parseDescription(describe("range", "auto")).error == "range must be full or limited");
+	CHECK(contains(parseDescription(describe("stride", "11")).error, "less than width x 3 = 12"));
+	CHECK(contains(parseDescription(describe("payload", "47")).error, "matches neither height x stride = 48 nor the unpadded last row = 44"));
+	CHECK(contains(parseDescription(describe("width", "4x")).error, "width must be"));
+	CHECK(contains(parseDescription(describe("height", "1")).error, "height must be"));
+	CHECK(contains(parseDescription(describe("width", "99999")).error, "width must be"));
+	CHECK(contains(parseDescription(std::string(validDescription) + "colour = red\n").error, "unknown key 'colour'"));
+	CHECK(contains(parseDescription(std::string(validDescription) + "width = 4\n").error, "duplicate key 'width'"));
+	CHECK(contains(parseDescription(std::string(validDescription) + "no equals sign\n").error, "expected key = value"));
+	CHECK(parseDescription(std::string(validDescription) + "source = synthetic\n").description->source == "synthetic");
+
+	// Files: exactly payload bytes. Short and long files are rejected.
+	fs::create_directories(tmp / "raw");
+	const auto desc = tmp / "raw/f.desc", rawFile = tmp / "raw/f.bgr24";
+	write(desc, validDescription);
+	auto bytes = [&](size_t n) {
+		std::ofstream f(rawFile, std::ios::binary | std::ios::trunc);
+		for (size_t i = 0; i < n; ++i) f.put(char(i));
+	};
+	bytes(48);
+	auto loaded = load(rawFile.string(), desc.string());
+	CHECK(loaded.frame && loaded.frame->bytes.size() == 48 && loaded.frame->name == "f.bgr24");
+	CHECK(loaded.frame && loaded.frame->bytes[47] == 47);
+	CHECK(loaded.frame && patternName(*loaded.frame) == "file:" + loaded.frame->sha256.substr(0, 12) && loaded.frame->sha256.size() == 64);
+	bytes(47);
+	CHECK(contains(load(rawFile.string(), desc.string()).error, "is 47 bytes; the description says payload 48 (short file)"));
+	bytes(49);
+	CHECK(contains(load(rawFile.string(), desc.string()).error, "(longer than described)"));
+	bytes(0);
+	CHECK(contains(load(rawFile.string(), desc.string()).error, "(short file)"));
+	CHECK(contains(load((tmp / "raw/none").string(), desc.string()).error, "cannot read input"));
+	CHECK(contains(load(rawFile.string(), (tmp / "raw/none.desc").string()).error, "cannot read description"));
+	write(desc, describe("format", "RGB24"));
+	CHECK(contains(load(rawFile.string(), desc.string()).error, "f.desc: unsupported format"));
+
+	// The committed fixtures load, and their hashes identify them
+	const fs::path fixtures = fs::path(BENCH_FIXTURES);
+	auto padded = load((fixtures / "scene-64x36-padded.bgr24").string(), (fixtures / "scene-64x36-padded.desc").string());
+	auto tight = load((fixtures / "scene-64x36-tight.bgr24").string(), (fixtures / "scene-64x36-tight.desc").string());
+	CHECK(padded.frame && padded.frame->description.stride == 200 && padded.frame->bytes.size() == 36u * 200u);
+	CHECK(tight.frame && tight.frame->description.range == "limited" && tight.frame->bytes.size() == 35u * 192u + 192u);
+	CHECK(padded.frame && tight.frame && padded.frame->sha256 != tight.frame->sha256);
+	// Orientation: the first bytes are the top-left marker (white), not padding
+	CHECK(padded.frame && padded.frame->bytes[0] == 255 && padded.frame->bytes[1] == 255 && padded.frame->bytes[2] == 255);
+	CHECK(padded.frame && padded.frame->bytes[64 * 3] == 0xee);   // first padding byte of row 0
+
+	// JSON: a synthetic run says so, with every file field null; a file run names its input
+	Run synthetic;
+	synthetic.width = 2; synthetic.height = 2; synthetic.stride = 6;
+	Case c; c.range = "full"; c.output = "full"; c.pattern = "random"; c.samplesNs = { 5 };
+	synthetic.cases = { c };
+	CHECK(contains(json(synthetic, false), "\"input\":{\"kind\":\"synthetic\",\"name\":null,\"sha256\":null,\"format\":null,\"declared_range\":null,\"orientation\":null,\"payload_bytes\":null,\"source\":null}"));
+	CHECK(!contains(text(synthetic, 1, 1), "input file"));
+	if (tight.frame)
+	{
+		Run fromFile = synthetic;
+		fromFile.input.kind = "file";
+		fromFile.input.name = tight.frame->name;
+		fromFile.input.sha256 = tight.frame->sha256;
+		fromFile.input.declaredRange = std::string("limited");
+		fromFile.input.payloadBytes = 6912;
+		CHECK(contains(json(fromFile, false), "\"kind\":\"file\",\"name\":\"scene-64x36-tight.bgr24\",\"sha256\":\"" + tight.frame->sha256 + "\""));
+		CHECK(contains(json(fromFile, false), "\"payload_bytes\":6912"));
+		CHECK(contains(text(fromFile, 1, 1), "input file: scene-64x36-tight.bgr24 sha256 " + tight.frame->sha256 + " (declared range limited)\n"));
+	}
 }
 
 static fs::path fakeSys(const fs::path& root, bool full)
@@ -233,7 +342,7 @@ static void writers(const fs::path& tmp)
 	run.cases.push_back(g);
 	const auto t = text(run, 3, 10);
 	CHECK(t.rfind(expected, 0) == 0 && contains(t, "input pattern: gradient\nrange    output"));
-	CHECK(!contains(text(Run{ 1, 1, 3, 0, "", 0, {}, { g } }, 1, 1), "input pattern: random"));
+	CHECK(!contains(text(Run{ 1, 1, 3, 0, "", 0, {}, { g }, {} }, 1, 1), "input pattern: random"));
 
 	// JSON: missing is null, observed zero is 0, raw samples only on request.
 	const auto s = sampleRun(tmp, "A76", 4, 1);
@@ -277,6 +386,7 @@ int main(int argc, char** argv)
 	options();
 	metadata(tmp);
 	writers(tmp);
+	rawFrames(tmp);
 	if (argc == 3 && std::string(argv[1]) == "--emit-sample")
 	{
 		const fs::path out = argv[2];

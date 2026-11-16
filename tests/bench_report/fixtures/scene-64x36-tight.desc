@@ -1,0 +1,9 @@
+# hyperhdr raw frame description, version 1
+format = BGR24
+width = 64
+height = 36
+stride = 192
+range = limited
+orientation = top-down
+payload = 6912
+source = synthetic scene (tests/bench_report/fixtures/make-fixtures.py), no personal content

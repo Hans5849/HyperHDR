@@ -1,0 +1,93 @@
+{
+  "schema": "hyperhdr.bgr24-bench/1",
+  "description": "Field specification for `DecoderTest --bgr24-bench --json` output. Objects list their fields in output order. type: string | integer | number | boolean | object | array. nullable: JSON null means the value could not be read (never 0). required: false only for fields absent in some valid files.",
+  "objects": {
+    "run": [
+      {"name": "schema", "type": "string", "const": "hyperhdr.bgr24-bench/1", "doc": "schema and version identifier"},
+      {"name": "metadata", "type": "object", "object": "metadata", "doc": "run conditions"},
+      {"name": "config", "type": "object", "object": "config", "doc": "input layout and statistics rules"},
+      {"name": "cases", "type": "array", "items": "object", "object": "case", "min_items": 1, "doc": "one record per timed case"}
+    ],
+    "metadata": [
+      {"name": "commit", "type": "string", "nullable": true, "doc": "as given by --commit"},
+      {"name": "label", "type": "string", "nullable": true, "doc": "as given by --label"},
+      {"name": "compiler", "type": "string", "nullable": true, "doc": "compiler and version"},
+      {"name": "build_type", "type": "string", "nullable": true, "doc": "CMake build type"},
+      {"name": "optimized", "type": "boolean", "doc": "built with optimisation"},
+      {"name": "assertions", "type": "boolean", "doc": "assertions enabled"},
+      {"name": "os", "type": "string", "nullable": true, "doc": "kernel name and release"},
+      {"name": "arch", "type": "string", "nullable": true, "doc": "machine architecture"},
+      {"name": "affinity", "type": "array", "items": "integer", "nullable": true, "unit": "CPU index", "doc": "CPUs the process may run on"},
+      {"name": "pinned_cpu", "type": "integer", "nullable": true, "unit": "CPU index", "doc": "the CPU when the affinity is exactly one, else null"},
+      {"name": "start_cpu", "type": "integer", "nullable": true, "unit": "CPU index", "doc": "CPU at start"},
+      {"name": "midr", "type": "string", "nullable": true, "pinned_only": true, "doc": "MIDR_EL1 of the pinned CPU"},
+      {"name": "core", "type": "string", "nullable": true, "pinned_only": true, "doc": "core decoded from MIDR (e.g. Cortex-A76)"},
+      {"name": "model_name", "type": "string", "nullable": true, "doc": "/proc/cpuinfo model name"},
+      {"name": "governor", "type": "string", "nullable": true, "pinned_only": true, "doc": "cpufreq governor of the pinned CPU"},
+      {"name": "min_freq_khz", "type": "integer", "nullable": true, "unit": "kHz", "pinned_only": true, "doc": "scaling_min_freq of the pinned CPU"},
+      {"name": "max_freq_khz", "type": "integer", "nullable": true, "unit": "kHz", "pinned_only": true, "doc": "scaling_max_freq of the pinned CPU"},
+      {"name": "before", "type": "object", "object": "snapshot", "doc": "readings before the first case"},
+      {"name": "after", "type": "object", "object": "snapshot", "doc": "readings after the last case"}
+    ],
+    "snapshot": [
+      {"name": "cur_freq_khz", "type": "integer", "nullable": true, "unit": "kHz", "pinned_only": true, "doc": "scaling_cur_freq of the pinned CPU"},
+      {"name": "loadavg", "type": "array", "items": "number", "length": 3, "nullable": true, "doc": "1, 5 and 15 minute load averages"},
+      {"name": "thermal", "type": "array", "items": "object", "object": "thermal", "doc": "every readable thermal zone; empty when none"}
+    ],
+    "thermal": [
+      {"name": "zone", "type": "string", "doc": "thermal_zoneN"},
+      {"name": "type", "type": "string", "nullable": true, "doc": "zone type, e.g. bigcore0-thermal"},
+      {"name": "milli_c", "type": "integer", "nullable": true, "unit": "milli-degC", "doc": "temperature"}
+    ],
+    "config": [
+      {"name": "width", "type": "integer", "unit": "px", "doc": "input width"},
+      {"name": "height", "type": "integer", "unit": "px", "doc": "input height"},
+      {"name": "stride", "type": "integer", "unit": "bytes", "doc": "bytes from one input row to the next"},
+      {"name": "lut_bytes", "type": "integer", "unit": "bytes", "doc": "LUT size"},
+      {"name": "lut_fill", "type": "string", "doc": "LUT contents"},
+      {"name": "seed", "type": "integer", "doc": "seed of the random pattern"},
+      {"name": "percentile_rule", "type": "string", "const": "sorted[floor(n*p/100)]", "doc": "percentile definition"},
+      {"name": "time_unit", "type": "string", "const": "ns", "doc": "unit of every *_ns field"},
+      {"name": "clock", "type": "string", "const": "steady_clock", "doc": "clock used for timing"},
+      {"name": "input", "type": "object", "object": "input", "required": false, "doc": "where the input came from; absent in files written before 2026-11-16"}
+    ],
+    "input": [
+      {"name": "kind", "type": "string", "enum": ["synthetic", "file"], "doc": "synthetic pattern or saved raw frame"},
+      {"name": "name", "type": "string", "nullable": true, "file_only": true, "doc": "raw file name, without directories"},
+      {"name": "sha256", "type": "string", "nullable": true, "file_only": true, "doc": "SHA-256 of the raw file"},
+      {"name": "format", "type": "string", "nullable": true, "file_only": true, "doc": "pixel format from the description"},
+      {"name": "declared_range", "type": "string", "nullable": true, "file_only": true, "doc": "full or limited, as the description states"},
+      {"name": "orientation", "type": "string", "nullable": true, "file_only": true, "doc": "row order from the description"},
+      {"name": "payload_bytes", "type": "integer", "nullable": true, "unit": "bytes", "file_only": true, "doc": "raw file size"},
+      {"name": "source", "type": "string", "nullable": true, "doc": "free text from the description (optional there)"}
+    ],
+    "case": [
+      {"name": "scenario", "type": "string", "doc": "range-output-lut|nolut-pattern"},
+      {"name": "range", "type": "string", "enum": ["full", "limited"], "doc": "decoder range mode"},
+      {"name": "output", "type": "string", "enum": ["full", "quarter"], "doc": "output size mode"},
+      {"name": "lut", "type": "boolean", "doc": "LUT applied"},
+      {"name": "pattern", "type": "string", "pattern": "^(random|gradient|solid|file:[0-9a-f]{12})$", "doc": "input: synthetic pattern or file:<first 12 hex of sha256>"},
+      {"name": "output_width", "type": "integer", "unit": "px", "doc": "output width actually produced"},
+      {"name": "output_height", "type": "integer", "unit": "px", "doc": "output height actually produced"},
+      {"name": "warmup", "type": "integer", "unit": "calls", "doc": "untimed calls before sampling (--warmup)"},
+      {"name": "samples", "type": "integer", "unit": "calls", "doc": "timed calls (--iterations)"},
+      {"name": "first_ns", "type": "integer", "unit": "ns", "doc": "the first (cold) call, part of the warm-up"},
+      {"name": "output_reallocations", "type": "integer", "unit": "count", "doc": "output buffer address changes across timed calls"},
+      {"name": "min_ns", "type": "integer", "unit": "ns", "doc": "minimum"},
+      {"name": "median_ns", "type": "integer", "unit": "ns", "doc": "p50 by the percentile rule"},
+      {"name": "p95_ns", "type": "integer", "unit": "ns", "doc": "p95 by the percentile rule"},
+      {"name": "p99_ns", "type": "integer", "unit": "ns", "doc": "p99 by the percentile rule"},
+      {"name": "max_ns", "type": "integer", "unit": "ns", "doc": "maximum"},
+      {"name": "mean_ns", "type": "number", "unit": "ns", "doc": "arithmetic mean"},
+      {"name": "stddev_ns", "type": "number", "nullable": true, "unit": "ns", "doc": "sample standard deviation; null below two samples"},
+      {"name": "lut_access", "type": "object", "object": "lut_access", "nullable": true, "doc": "LUT access profile of the input; null without LUT"},
+      {"name": "raw_ns", "type": "array", "items": "integer", "required": false, "unit": "ns", "doc": "every timed sample, in order (--raw only)"}
+    ],
+    "lut_access": [
+      {"name": "lookups", "type": "integer", "unit": "count", "doc": "LUT lookups per call"},
+      {"name": "distinct_entries", "type": "integer", "unit": "count", "doc": "distinct LUT entries touched"},
+      {"name": "distinct_lines_64", "type": "integer", "unit": "count", "doc": "distinct 64-byte lines touched"},
+      {"name": "distinct_pages_4k", "type": "integer", "unit": "count", "doc": "distinct 4 KiB pages touched"}
+    ]
+  }
+}
