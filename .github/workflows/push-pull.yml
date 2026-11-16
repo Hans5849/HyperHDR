@@ -79,14 +79,14 @@ jobs:
           test "$(wc -l <build-bench-report/decoder.csv)" -eq 17
           if build-codec/bin/DecoderTest --bgr24-bench --jsn x; then echo '::error::unknown benchmark option accepted'; exit 1; fi
 
-      - name: Colour reference patterns (generator, manifests, preview checker)
-        run: python3 tests/ci/color-patterns-test.py
-
       - name: Command-line parser tests (no Qt option warnings)
         run: |
           cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
           cmake --build build-cli -j
           ctest --test-dir build-cli --output-on-failure
+
+      - name: Colour reference patterns (generator, manifests, preview checker)
+        run: python3 tests/ci/color-patterns-test.py
 
       - name: Debian version mapping
         run: cmake -P tests/packaging/debian-version-test.cmake
