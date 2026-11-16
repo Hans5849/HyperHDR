@@ -464,7 +464,8 @@ void FrameDecoder::processSystemImageBGR16(Image<ColorRgb>& image, int targetSiz
 
 		if (_lutBuffer == nullptr)
 		{
-			sLine += 2;
+			// RGB565 pixels are 2 bytes: start at the first one (#52; a "+= 2" here,
+			// copied from the BGRA decoder, skipped a whole pixel)
 			while (dLine < dLineEnd)
 			{
 				memcpy(buffer, sLine, 2);   // no type-punned 2-byte load (#51)
