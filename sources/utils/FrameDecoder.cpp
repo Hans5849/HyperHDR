@@ -430,10 +430,13 @@ void FrameDecoder::processSystemImageBGR(Image<ColorRgb>& image, int targetSizeX
 		}
 		else while (dLine < dLineEnd)
 		{
-			memcpy(&buffer, &sLine, 3);
+			// Read the B,G,R pixel at sLine (issue #49: this copied the bytes of
+			// the pointer itself) and write exactly one 3-byte RGB pixel: a 4-byte
+			// store was misaligned and touched the next pixel or the buffer tail.
+			memcpy(buffer, sLine, 3);
 			sLine += divisionX;
 			ind_lutd = LUT_INDEX(buffer[2], buffer[1], buffer[0]);
-			*((uint32_t*)dLine) = *((uint32_t*)(&_lutBuffer[ind_lutd]));
+			memcpy(dLine, &_lutBuffer[ind_lutd], 3);
 			dLine += 3;
 		}
 	}
