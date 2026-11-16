@@ -1028,5 +1028,88 @@ int main()
 		r.step([&] { r.sup.start(); });
 		REQUIRE(r.sup.state() == Supervisor::State::Streaming && !r.sup.awaitingDecode());
 	});
+	// ---- Remaining recovery gaps (overnight review, 2026-11-15) ---------------------
+	test("supervisor: node vanishing while waiting (probe unknown) falls back to discovery and backoff", [] {
+		using Next = FakeHost::Next;
+		Rig r; r.host.script = { Next::NoSignal };
+		r.step([&] { r.sup.start(); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.waitOpen);
+		// The node disappears: power_present and QUERY_DV_TIMINGS both fail with
+		// ENODEV, which probeSignal reports as Unknown with no detail.
+		r.host.waiting = { Signal::Unknown, "" };
+		r.host.script = { Next::InitFail, Next::InitFail, Next::NoSignal };
+		r.step([&] { r.sup.signalPollFired(); });
+		REQUIRE(r.host.starts == 2 && r.sup.state() == Supervisor::State::Backoff);   // discovery failed: bounded backoff
+		REQUIRE(r.host.retryMs == 3000 && !r.host.polling && !r.host.waitOpen && !r.host.capture);
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == 6000);
+		// The node returns, still without a source: back to the event-driven wait.
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.polling && r.host.retryMs < 0);
+		// No busy loop at any point: one capture attempt per poll or timer event.
+		REQUIRE(r.host.starts == 4);
+	});
+	test("supervisor: decode failure and stream error in the same teardown restart once", [] {
+		for (bool decodeFirst : { true, false })
+		{
+			Rig r;
+			r.step([&] { r.sup.start(); });
+			int64_t now = 0;
+			for (int i = 0; i < 29; ++i, now += 200) r.step([&] { r.sup.decodeFailed(now, "corrupt"); });
+			REQUIRE(r.sup.state() == Supervisor::State::Streaming);
+			const unsigned stops = r.host.stops;
+			// One worker's failure trips decode health while another worker's
+			// buffer re-queue fails (or the other way round), back to back.
+			r.step([&] {
+				if (decodeFirst) { r.sup.decodeFailed(now, "corrupt"); r.sup.streamFailed("streaming: VIDIOC_QBUF: No such device"); }
+				else { r.sup.streamFailed("streaming: VIDIOC_QBUF: No such device"); r.sup.decodeFailed(now, "corrupt"); }
+				// Later failures from the same generation, already queued. (Late
+				// successes never reach the supervisor: the grabber drops results
+				// when !_initialized or sourceCount < _generationFrame, and
+				// decodeSucceeded/frameReceived rely on that guard.)
+				for (int i = 0; i < 5; ++i) { r.sup.decodeFailed(now + i, "corrupt"); r.sup.streamFailed("late QBUF error"); }
+			});
+			REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.stops == stops + 1);   // one teardown
+			REQUIRE(r.host.retryMs == 3000 && r.sup.recovery().failures() == 1);              // one failure counted
+			REQUIRE(r.sup.awaitingDecode() == decodeFirst);   // only a decode-health restart waits for a decoded frame
+			REQUIRE(r.host.count(LogLevel::Warning, "streaming failed") == 1);
+		}
+	});
+	test("supervisor: explicit stop during source-change restart, decode recovery or wait releases everything", [] {
+		auto stopped = [](Rig& r) {
+			REQUIRE(r.sup.state() == Supervisor::State::Stopped && !r.host.capture && !r.host.polling && !r.host.waitOpen && r.host.retryMs < 0);
+			const unsigned starts = r.host.starts;
+			// Timers and events that were already queued must not start capture again.
+			r.step([&] {
+				r.sup.retryTimerFired(); r.sup.signalPollFired();
+				r.sup.decodeFailed(1, "late"); r.sup.streamFailed("late"); r.sup.stalled({}); r.sup.sourceEvent(true, {});
+			});
+			REQUIRE(r.sup.state() == Supervisor::State::Stopped && r.host.starts == starts && r.host.retryMs < 0 && !r.host.polling);
+			REQUIRE(!r.sup.awaitingDecode() && r.sup.consecutiveDecodeFailures() == 0);
+		};
+		{   // stop while a source-change restart is pending (500 ms timer armed)
+			Rig r;
+			r.step([&] { r.sup.start(); r.sup.sourceEvent(true, { Signal::Present, "detected 3840x2160p" }); });
+			REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == Recovery::sourceChangeDelayMs);
+			r.step([&] { r.sup.stop(); });
+			stopped(r);
+		}
+		{   // stop while decode recovery waits for the first decoded frame
+			Rig r;
+			r.step([&] { r.sup.start(); });
+			for (int i = 0; i < 400 && r.sup.state() == Supervisor::State::Streaming; ++i) r.step([&] { r.sup.decodeFailed(i * 16); });
+			r.step([&] { r.sup.retryTimerFired(); });
+			REQUIRE(r.sup.state() == Supervisor::State::Streaming && r.sup.awaitingDecode());
+			r.step([&] { r.sup.stop(); });
+			stopped(r);
+		}
+		{   // stop after a source event reported the input gone (signal wait open)
+			Rig r;
+			r.step([&] { r.sup.start(); r.sup.sourceEvent(true, { Signal::Absent, "no signal (QUERY_DV_TIMINGS: ENOLINK)" }); });
+			REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.waitOpen);
+			r.step([&] { r.sup.stop(); });
+			stopped(r);
+		}
+	});
 	std::cout << passed << " test groups passed\n";
 }
