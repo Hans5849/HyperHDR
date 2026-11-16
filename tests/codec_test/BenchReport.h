@@ -343,6 +343,15 @@ struct Case
 	std::string scenario() const { return range + "-" + output + "-" + (lut ? "lut" : "nolut") + "-" + pattern; }
 };
 
+// Where the benchmark input came from. Synthetic patterns are generated in
+// memory; a file input is a saved raw frame with its description (RawFrameInput.h).
+struct Input
+{
+	std::string kind = "synthetic";   // synthetic | file
+	std::optional<std::string> name, sha256, format, declaredRange, orientation, source;
+	std::optional<int64_t> payloadBytes;
+};
+
 struct Run
 {
 	int width = 0, height = 0, stride = 0;
@@ -351,6 +360,7 @@ struct Run
 	uint32_t seed = 0;
 	Metadata meta;
 	std::vector<Case> cases;
+	Input input;   // last, so existing aggregate initialisers keep their meaning
 };
 
 // ---------------------------------------------------------------- writers
@@ -366,6 +376,9 @@ inline std::string text(const Run& run, int iterations, int warmup)
 	std::snprintf(b, sizeof b, "BGR24 decode %dx%d stride %d: %d timed runs per case after %d warm-up (ms)\n",
 		run.width, run.height, run.stride, iterations, warmup);
 	out += b;
+	if (run.input.kind == "file")
+		out += "input file: " + run.input.name.value_or("?") + " sha256 " + run.input.sha256.value_or("?") +
+			" (declared range " + run.input.declaredRange.value_or("?") + "; saved frame, decoder timing only, not a live-capture measurement)\n";
 	std::string pattern;
 	for (const auto& c : run.cases)
 	{
@@ -441,7 +454,11 @@ inline std::string json(const Run& run, bool raw)
 	o += "  \"config\": {\"width\":" + std::to_string(run.width) + ",\"height\":" + std::to_string(run.height) +
 		",\"stride\":" + std::to_string(run.stride) + ",\"lut_bytes\":" + std::to_string(run.lutBytes) +
 		",\"lut_fill\":" + jsonString(run.lutFill) + ",\"seed\":" + std::to_string(run.seed) +
-		",\"percentile_rule\":\"sorted[floor(n*p/100)]\",\"time_unit\":\"ns\",\"clock\":\"steady_clock\"},\n";
+		",\"percentile_rule\":\"sorted[floor(n*p/100)]\",\"time_unit\":\"ns\",\"clock\":\"steady_clock\"" +
+		",\n    \"input\":{\"kind\":" + jsonString(run.input.kind) + ",\"name\":" + jsonValue(run.input.name) + ",\"sha256\":" + jsonValue(run.input.sha256) +
+		",\"format\":" + jsonValue(run.input.format) + ",\"declared_range\":" + jsonValue(run.input.declaredRange) +
+		",\"orientation\":" + jsonValue(run.input.orientation) + ",\"payload_bytes\":" + jsonValue(run.input.payloadBytes) +
+		",\"source\":" + jsonValue(run.input.source) + "}},\n";
 	o += "  \"cases\": [";
 	for (size_t i = 0; i < run.cases.size(); ++i)
 	{
@@ -558,6 +575,7 @@ struct Options
 	int iterations = 200, warmup = 10;
 	std::vector<std::string> patterns{ "random" };
 	std::optional<std::string> jsonPath, csvPath, commit, label;
+	std::optional<std::string> inputPath, inputDescription;   // --input / --input-desc
 	bool raw = false;
 	std::string error;   // non-empty: the command line was rejected
 };
@@ -567,6 +585,7 @@ struct Options
 inline Options parseOptions(const std::vector<std::string>& args)
 {
 	Options o;
+	bool patternGiven = false;
 	auto positive = [&](const std::string& v, int& out, const char* name) {
 		char* end = nullptr;
 		const long n = std::strtol(v.c_str(), &end, 10);
@@ -590,8 +609,11 @@ inline Options parseOptions(const std::vector<std::string>& args)
 		if (auto v = value("--label")) { if (!v->empty()) o.label = v; continue; }
 		if (auto v = value("--iterations")) { positive(*v, o.iterations, "--iterations"); continue; }
 		if (auto v = value("--warmup")) { positive(*v, o.warmup, "--warmup"); continue; }
+		if (auto v = value("--input")) { o.inputPath = v; continue; }
+		if (auto v = value("--input-desc")) { o.inputDescription = v; continue; }
 		if (auto v = value("--pattern"))
 		{
+			patternGiven = true;
 			o.patterns.clear();
 			std::stringstream ss(*v);
 			for (std::string p; std::getline(ss, p, ',');)
@@ -604,6 +626,12 @@ inline Options parseOptions(const std::vector<std::string>& args)
 		}
 		o.error = "unknown benchmark option: " + a;
 	}
+	if (o.error.empty() && o.inputPath.has_value() != o.inputDescription.has_value())
+		o.error = "--input and --input-desc must be given together";
+	if (o.error.empty() && o.inputPath && patternGiven)
+		o.error = "--input replaces --pattern; give one or the other";
+	if (o.error.empty() && o.inputPath)
+		o.patterns.clear();   // the file is the only input
 	return o;
 }
 }

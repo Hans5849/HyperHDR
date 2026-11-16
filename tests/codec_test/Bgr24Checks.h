@@ -2,10 +2,13 @@
 #include <utils/FrameDecoder.h>
 #include <utils/Bgr24.h>
 #include "BenchReport.h"
+#include "RawFrameInput.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <iostream>
+#include <optional>
+#include <string>
 #include <vector>
 
 // Exercise the real dispatch table, not a second implementation of the decoder.
@@ -77,22 +80,54 @@ inline int benchBgr24Decoder(const BenchReport::Options& options = {})
 		std::fprintf(stderr, "bgr24-bench: %s\n", options.error.c_str());
 		return 2;
 	}
-	constexpr int width = 1920, height = 1080, stride = 5760;
+	// Synthetic inputs use the verified mainline layout; --input uses the saved
+	// frame's own layout, as its description states (RawFrameInput.h).
+	std::optional<RawFrame::Frame> file;
+	if (options.inputPath)
+	{
+		auto loaded = RawFrame::load(*options.inputPath, *options.inputDescription);
+		if (!loaded.frame)
+		{
+			std::fprintf(stderr, "bgr24-bench: %s\n", loaded.error.c_str());
+			return 2;
+		}
+		file = std::move(loaded.frame);
+	}
+	const int width = file ? file->description.width : 1920;
+	const int height = file ? file->description.height : 1080;
+	const int stride = file ? file->description.stride : 5760;
 	constexpr uint32_t seed = 12345;
-	std::vector<uint8_t> source(size_t(height - 1) * stride + width * 3);
+	std::vector<uint8_t> source = file ? file->bytes : std::vector<uint8_t>(size_t(height - 1) * stride + width * 3);
 	std::vector<uint8_t> lut(size_t(256) * 256 * 256 * 3, 0x80);   // full-size LUT, as captured frames use
 
 	BenchReport::Run run;
 	run.width = width; run.height = height; run.stride = stride;
+	std::vector<std::string> patterns = options.patterns;
+	if (file)
+	{
+		const auto& d = file->description;
+		run.input.kind = "file";
+		run.input.name = file->name;
+		run.input.sha256 = file->sha256;
+		run.input.format = d.format;
+		run.input.declaredRange = d.range;
+		run.input.orientation = d.orientation;
+		run.input.payloadBytes = int64_t(d.payload);
+		run.input.source = d.source;
+		patterns = { RawFrame::patternName(*file) };
+	}
 	run.lutBytes = lut.size(); run.lutFill = "constant 0x80"; run.seed = seed;
 	run.meta = BenchReport::collect(BenchReport::SysRoot{}, BenchReport::processAffinity(), BenchReport::currentCpu());
 	run.meta.commit = options.commit;
 	run.meta.label = options.label;
 
-	for (const auto& pattern : options.patterns)
+	for (const auto& pattern : patterns)
 	{
-		std::fill(source.begin(), source.end(), uint8_t(0));
-		BenchReport::fillPattern(pattern, source, width, height, stride, seed);
+		if (!file)
+		{
+			std::fill(source.begin(), source.end(), uint8_t(0));
+			BenchReport::fillPattern(pattern, source, width, height, stride, seed);
+		}
 		for (bool limited : {false, true})
 			for (bool quarter : {false, true})
 				for (bool tone : {false, true})

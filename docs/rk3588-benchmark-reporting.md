@@ -42,6 +42,7 @@ python3 scripts/rk3588/bench-summarize.py a76.json a55.json > summary.md
 | `--pattern LIST` | Inputs, comma-separated: `random` (the original, default), `gradient`, `solid`. |
 | `--iterations N`, `--warmup N` | Timed and warm-up calls per case (defaults 200 and 10). |
 | `--commit SHA`, `--label NAME` | Recorded as given; `--label` names the core when MIDR is unavailable. |
+| `--input FILE --input-desc DESC` | Time a saved raw frame instead of the synthetic patterns (see [Captured-frame input](#captured-frame-input)). Replaces `--pattern`; giving both is an error. |
 
 Unknown or malformed options exit with status 2 and name the first bad argument,
 so a typo can't silently produce a default run.
@@ -72,6 +73,162 @@ Percentile p is element `floor(n*p/100)` (0-based) of the ascending samples:
 the same rule the original table used, so the text and JSON agree.
 `bench-summarize.py` recomputes min/median/p95/p99/max from `raw_ns` and refuses
 a file whose summary disagrees.
+
+## JSON fields
+
+`scripts/rk3588/bench-schema.json` specifies every field: name, type, unit,
+whether it may be null and whether it is required, in output order. The table
+below is generated from it (`scripts/rk3588/bench-validate.py --markdown`). CI
+fails if this table and the specification disagree.
+
+| Field | Type | Unit | Null allowed | Required | Meaning |
+|---|---|---|---|---|---|
+| `schema` | string |  | no | yes | schema and version identifier |
+| `metadata` | object |  | no | yes | run conditions |
+| `config` | object |  | no | yes | input layout and statistics rules |
+| `cases` | array<object> |  | no | yes | one record per timed case |
+| `metadata.commit` | string |  | yes | yes | as given by --commit |
+| `metadata.label` | string |  | yes | yes | as given by --label |
+| `metadata.compiler` | string |  | yes | yes | compiler and version |
+| `metadata.build_type` | string |  | yes | yes | CMake build type |
+| `metadata.optimized` | boolean |  | no | yes | built with optimisation |
+| `metadata.assertions` | boolean |  | no | yes | assertions enabled |
+| `metadata.os` | string |  | yes | yes | kernel name and release |
+| `metadata.arch` | string |  | yes | yes | machine architecture |
+| `metadata.affinity` | array<integer> | CPU index | yes | yes | CPUs the process may run on |
+| `metadata.pinned_cpu` | integer | CPU index | yes | yes | the CPU when the affinity is exactly one, else null |
+| `metadata.start_cpu` | integer | CPU index | yes | yes | CPU at start |
+| `metadata.midr` | string |  | yes | yes | MIDR_EL1 of the pinned CPU; null unless pinned to one CPU |
+| `metadata.core` | string |  | yes | yes | core decoded from MIDR (e.g. Cortex-A76); null unless pinned to one CPU |
+| `metadata.model_name` | string |  | yes | yes | /proc/cpuinfo model name |
+| `metadata.governor` | string |  | yes | yes | cpufreq governor of the pinned CPU; null unless pinned to one CPU |
+| `metadata.min_freq_khz` | integer | kHz | yes | yes | scaling_min_freq of the pinned CPU; null unless pinned to one CPU |
+| `metadata.max_freq_khz` | integer | kHz | yes | yes | scaling_max_freq of the pinned CPU; null unless pinned to one CPU |
+| `metadata.before` | object |  | no | yes | readings before the first case |
+| `metadata.after` | object |  | no | yes | readings after the last case |
+| `metadata.before / after.cur_freq_khz` | integer | kHz | yes | yes | scaling_cur_freq of the pinned CPU; null unless pinned to one CPU |
+| `metadata.before / after.loadavg` | array<number> |  | yes | yes | 1, 5 and 15 minute load averages |
+| `metadata.before / after.thermal` | array<object> |  | no | yes | every readable thermal zone; empty when none |
+| `metadata.*.thermal[].zone` | string |  | no | yes | thermal_zoneN |
+| `metadata.*.thermal[].type` | string |  | yes | yes | zone type, e.g. bigcore0-thermal |
+| `metadata.*.thermal[].milli_c` | integer | milli-degC | yes | yes | temperature |
+| `config.width` | integer | px | no | yes | input width |
+| `config.height` | integer | px | no | yes | input height |
+| `config.stride` | integer | bytes | no | yes | bytes from one input row to the next |
+| `config.lut_bytes` | integer | bytes | no | yes | LUT size |
+| `config.lut_fill` | string |  | no | yes | LUT contents |
+| `config.seed` | integer |  | no | yes | seed of the random pattern |
+| `config.percentile_rule` | string |  | no | yes | percentile definition |
+| `config.time_unit` | string |  | no | yes | unit of every *_ns field |
+| `config.clock` | string |  | no | yes | clock used for timing |
+| `config.input` | object |  | no | no | where the input came from; absent in files written before 2026-11-16 |
+| `config.input.kind` | string |  | no | yes | synthetic pattern or saved raw frame |
+| `config.input.name` | string |  | yes | yes | raw file name, without directories; null for synthetic input |
+| `config.input.sha256` | string |  | yes | yes | SHA-256 of the raw file; null for synthetic input |
+| `config.input.format` | string |  | yes | yes | pixel format from the description; null for synthetic input |
+| `config.input.declared_range` | string |  | yes | yes | full or limited, as the description states; null for synthetic input |
+| `config.input.orientation` | string |  | yes | yes | row order from the description; null for synthetic input |
+| `config.input.payload_bytes` | integer | bytes | yes | yes | raw file size; null for synthetic input |
+| `config.input.source` | string |  | yes | yes | free text from the description (optional there) |
+| `cases[].scenario` | string |  | no | yes | range-output-lut|nolut-pattern |
+| `cases[].range` | string |  | no | yes | decoder range mode |
+| `cases[].output` | string |  | no | yes | output size mode |
+| `cases[].lut` | boolean |  | no | yes | LUT applied |
+| `cases[].pattern` | string |  | no | yes | input: synthetic pattern or file:<first 12 hex of sha256> |
+| `cases[].output_width` | integer | px | no | yes | output width actually produced |
+| `cases[].output_height` | integer | px | no | yes | output height actually produced |
+| `cases[].warmup` | integer | calls | no | yes | untimed calls before sampling (--warmup) |
+| `cases[].samples` | integer | calls | no | yes | timed calls (--iterations) |
+| `cases[].first_ns` | integer | ns | no | yes | the first (cold) call, part of the warm-up |
+| `cases[].output_reallocations` | integer | count | no | yes | output buffer address changes across timed calls |
+| `cases[].min_ns` | integer | ns | no | yes | minimum |
+| `cases[].median_ns` | integer | ns | no | yes | p50 by the percentile rule |
+| `cases[].p95_ns` | integer | ns | no | yes | p95 by the percentile rule |
+| `cases[].p99_ns` | integer | ns | no | yes | p99 by the percentile rule |
+| `cases[].max_ns` | integer | ns | no | yes | maximum |
+| `cases[].mean_ns` | number | ns | no | yes | arithmetic mean |
+| `cases[].stddev_ns` | number | ns | yes | yes | sample standard deviation; null below two samples |
+| `cases[].lut_access` | object |  | yes | yes | LUT access profile of the input; null without LUT |
+| `cases[].raw_ns` | array<integer> | ns | no | no | every timed sample, in order (--raw only) |
+| `cases[].lut_access.lookups` | integer | count | no | yes | LUT lookups per call |
+| `cases[].lut_access.distinct_entries` | integer | count | no | yes | distinct LUT entries touched |
+| `cases[].lut_access.distinct_lines_64` | integer | count | no | yes | distinct 64-byte lines touched |
+| `cases[].lut_access.distinct_pages_4k` | integer | count | no | yes | distinct 4 KiB pages touched |
+
+`scripts/rk3588/bench-validate.py [--iterations N] [--warmup N] [--patterns LIST] [--raw] [--input-sha256 HEX] RUN.json...`
+checks a file against the specification. Use it before the summarizer, and on
+every board artifact. Beyond types, it checks:
+
+- no undocumented fields, and fields in the specified order;
+- null only where allowed. Per-core fields must be null when the run wasn't
+  pinned to one CPU, and the file fields of `config.input` must be null for
+  synthetic input;
+- `raw_ns` length equals `samples`. min/median/p95/p99/max are recomputed
+  exactly, and mean and sample deviation to the written precision;
+- scenario names, case order (per pattern: range x output x LUT), output sizes
+  (quarter is `(w>>1) x (h>>1)`), and LUT profiles present exactly for LUT cases;
+- with options: the iteration and warm-up counts, the pattern order, `--raw`,
+  and the input file's SHA-256.
+
+`config.input` was added on 2026-11-16 and is optional, so earlier files stay
+valid. The schema identifier is unchanged (`hyperhdr.bgr24-bench/1`): every
+change was additive.
+
+## Captured-frame input
+
+`--input FRAME --input-desc DESC` times the decoder on a saved raw frame instead
+of a generated pattern, for example to test hypothesis H2 below with real,
+spatially coherent video. The benchmark **never opens a capture device**. Saving
+a frame is a separate, operator-run step, and it is never automatic.
+
+The description is a small text file. Every property the decoder depends on is
+stated in it, never guessed from the file size:
+
+```
+# hyperhdr raw frame description, version 1
+format = BGR24
+width = 1920
+height = 1080
+stride = 5760
+range = limited
+orientation = top-down
+payload = 6220800
+source = <how the frame was produced; optional>
+```
+
+| Key | Rule |
+|---|---|
+| `format` | `BGR24` only (packed B, G, R; V4L2 `BGR3`). Other formats are rejected, not reinterpreted. |
+| `width`, `height` | Pixels, 2..7680 and 2..4320. |
+| `stride` | Bytes from one row to the next. At least `width x 3`. |
+| `range` | `full` or `limited`: the content's quantization, as recorded when the frame was saved (e.g. from checklist row A4/A6). It is recorded as `declared_range`. The benchmark still times both decoder range modes, which describe how the decoder interprets the bytes, not what the source sent. |
+| `orientation` | `top-down` only: the first byte is the blue value of the top-left pixel. Bottom-up frames are rejected. |
+| `payload` | Exact file size in bytes. It must be `height x stride` (a V4L2 buffer including the last row's padding) or `(height-1) x stride + width x 3` (no padding after the last row). |
+| `source` | Optional free text. |
+
+Unknown or duplicate keys, a missing key, a file shorter or longer than
+`payload`, or a payload that matches neither layout: the benchmark exits with
+status 2 and names the problem. It doesn't time anything in that case.
+
+In the results, `config.input` names the file and its SHA-256, and the case
+pattern is `file:<first 12 hex of the SHA-256>`. Two different frames are never
+grouped by the summarizer, and the same bytes always get the same name.
+
+**Privacy.** A captured frame is a picture of whatever the source showed. Only
+commit or attach frames with no personal content, such as test patterns shown
+by the source.
+`tests/bench_report/fixtures` holds two synthetic 64x36 frames made by
+`make-fixtures.py`. CI checks that they match the script byte for byte.
+
+**Saved frames are not live capture.** A `--input` run times the decoder on
+bytes already in memory: no V4L2 dequeue, DMA, driver or HDMI timing. To keep
+that visible, the text output says so on its `input file:` line, and the
+summarizer lists saved-frame inputs in their own section and marks their result
+rows `(saved frame)`.
+
+The fixtures and CI runs show that the parser and the timing path work. **They
+are not RK3588 measurements**, and a 64x36 frame says nothing about cache
+behaviour at 1080p.
 
 ## Summarizer
 
