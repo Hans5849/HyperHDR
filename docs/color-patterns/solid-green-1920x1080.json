@@ -1,0 +1,49 @@
+{
+ "schema": "hyperhdr.color-pattern/1",
+ "pattern": "solid-green",
+ "file": "solid-green-1920x1080.png",
+ "width": 1920,
+ "height": 1080,
+ "sha256": "9e53e0737c952a94c6908b3000a2256e0ff37be0c7a34dc9341912f625ce6f86",
+ "encoding": "8-bit RGB PNG, lossless, sRGB chunk; sRGB code values, full range 0-255 in the file",
+ "orientation": "x right, y down; (0,0) is the top-left pixel",
+ "interpretations": {
+  "correct": "decoded = file value (full-range source, or limited-range source correctly expanded)",
+  "not_expanded": "limited-range signal decoded as full: 16 + round(v*219/255)",
+  "expanded_twice": "full-range signal expanded as limited: clamp(round((v-16)*255/219))"
+ },
+ "regions": [
+  {
+   "id": "S",
+   "kind": "patch",
+   "label": "green",
+   "x": 480,
+   "y": 270,
+   "w": 960,
+   "h": 540,
+   "file_rgb": [
+    0,
+    255,
+    0
+   ],
+   "expect": {
+    "correct": [
+     0,
+     255,
+     0
+    ],
+    "not_expanded": [
+     16,
+     235,
+     16
+    ],
+    "expanded_twice": [
+     0,
+     255,
+     0
+    ]
+   },
+   "discriminating": false
+  }
+ ]
+}

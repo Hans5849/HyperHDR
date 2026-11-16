@@ -1,0 +1,49 @@
+{
+ "schema": "hyperhdr.color-pattern/1",
+ "pattern": "solid-red",
+ "file": "solid-red-1920x1080.png",
+ "width": 1920,
+ "height": 1080,
+ "sha256": "7e5e67dbc6e782b8730e3549eb5c6f540e21576dedf7e203af4dc7d644a7bdd6",
+ "encoding": "8-bit RGB PNG, lossless, sRGB chunk; sRGB code values, full range 0-255 in the file",
+ "orientation": "x right, y down; (0,0) is the top-left pixel",
+ "interpretations": {
+  "correct": "decoded = file value (full-range source, or limited-range source correctly expanded)",
+  "not_expanded": "limited-range signal decoded as full: 16 + round(v*219/255)",
+  "expanded_twice": "full-range signal expanded as limited: clamp(round((v-16)*255/219))"
+ },
+ "regions": [
+  {
+   "id": "S",
+   "kind": "patch",
+   "label": "red",
+   "x": 480,
+   "y": 270,
+   "w": 960,
+   "h": 540,
+   "file_rgb": [
+    255,
+    0,
+    0
+   ],
+   "expect": {
+    "correct": [
+     255,
+     0,
+     0
+    ],
+    "not_expanded": [
+     235,
+     16,
+     16
+    ],
+    "expanded_twice": [
+     255,
+     0,
+     0
+    ]
+   },
+   "discriminating": false
+  }
+ ]
+}

@@ -1,0 +1,49 @@
+{
+ "schema": "hyperhdr.color-pattern/1",
+ "pattern": "solid-black",
+ "file": "solid-black-1920x1080.png",
+ "width": 1920,
+ "height": 1080,
+ "sha256": "31819827e3984dc0f7a9c9b3dc0bf4c8f2ef082e01d3bf2e261c6afd46f5de80",
+ "encoding": "8-bit RGB PNG, lossless, sRGB chunk; sRGB code values, full range 0-255 in the file",
+ "orientation": "x right, y down; (0,0) is the top-left pixel",
+ "interpretations": {
+  "correct": "decoded = file value (full-range source, or limited-range source correctly expanded)",
+  "not_expanded": "limited-range signal decoded as full: 16 + round(v*219/255)",
+  "expanded_twice": "full-range signal expanded as limited: clamp(round((v-16)*255/219))"
+ },
+ "regions": [
+  {
+   "id": "S",
+   "kind": "patch",
+   "label": "black",
+   "x": 480,
+   "y": 270,
+   "w": 960,
+   "h": 540,
+   "file_rgb": [
+    0,
+    0,
+    0
+   ],
+   "expect": {
+    "correct": [
+     0,
+     0,
+     0
+    ],
+    "not_expanded": [
+     16,
+     16,
+     16
+    ],
+    "expanded_twice": [
+     0,
+     0,
+     0
+    ]
+   },
+   "discriminating": true
+  }
+ ]
+}
