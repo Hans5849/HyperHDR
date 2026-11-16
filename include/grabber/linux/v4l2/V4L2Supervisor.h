@@ -72,6 +72,8 @@ public:
 	// Explicit stop: cancels every retry and wait and releases capture.
 	void stop()
 	{
+		_decodeFailures = 0;
+		_awaitingDecode = false;
 		_host.cancelRetry();
 		_host.closeSignalWait();
 		_host.stopCapture();
@@ -138,12 +140,54 @@ public:
 			fail(Failure::Streaming, detail);
 	}
 
-	// A complete frame. Logs recovery after earlier failed attempts.
+	// A complete frame was dequeued. Logs recovery after earlier failed
+	// attempts, except after a decode-failure restart: then only a frame that
+	// actually decodes proves recovery (decodeSucceeded), so a stream that
+	// delivers buffers but never decodes keeps backing off instead of
+	// resetting to the shortest delay on every dequeue.
 	void frameReceived()
 	{
-		if (const unsigned failures = _recovery.frameReceived())
-			_host.log(LogLevel::Info, "Capture recovered after " + std::to_string(failures) + " failed attempt(s)");
+		if (_awaitingDecode) { _recovery.payloadOk(); return; }
+		recovered();
 	}
+
+	// Decode health. A stream that keeps delivering buffers that never decode
+	// must not stay "healthy" (the watchdog only sees dequeues). It trips only
+	// when both hold: decodeFailureLimit consecutive failures, spanning at least
+	// decodeFailureWindowMs with no successful decode in between. Isolated errors
+	// (a corrupt MJPEG frame) reset on the next success and never restart.
+	static constexpr unsigned decodeFailureLimit = 30;
+	static constexpr int64_t decodeFailureWindowMs = 5000;
+
+	void decodeFailed(int64_t nowMs, const std::string& error = {})
+	{
+		if (_state != State::Streaming)
+			return;   // late worker result after a stop or restart
+		if (_decodeFailures++ == 0)
+			_firstDecodeFailureMs = nowMs;
+		const int64_t span = nowMs - _firstDecodeFailureMs;
+		if (_decodeFailures < decodeFailureLimit || span < decodeFailureWindowMs)
+			return;
+		const std::string detail = "decoding: " + std::to_string(_decodeFailures) +
+			" consecutive frames failed to decode over " + std::to_string(span) + " ms" +
+			(error.empty() ? std::string() : " (last error: " + error + ")");
+		_decodeFailures = 0;
+		_awaitingDecode = true;
+		fail(Failure::Streaming, detail);
+	}
+
+	void decodeSucceeded()
+	{
+		_decodeFailures = 0;
+		if (_awaitingDecode)
+		{
+			_awaitingDecode = false;
+			recovered();
+		}
+	}
+
+	unsigned consecutiveDecodeFailures() const { return _decodeFailures; }
+	bool awaitingDecode() const { return _awaitingDecode; }
 
 	// True when this short frame should escalate to a restart.
 	bool shortFrame() { return _recovery.shortFrame(); }
@@ -157,7 +201,11 @@ private:
 		_host.closeSignalWait();
 		_waitHandle = false;
 		if (!automatic)
+		{
 			_recovery = {};
+			_awaitingDecode = false;
+		}
+		_decodeFailures = 0;   // a new stream starts with a clean decode record
 		_retrying = automatic;
 		try
 		{
@@ -184,6 +232,12 @@ private:
 			fail(Failure::Initialization, e.what());
 		}
 		return false;
+	}
+
+	void recovered()
+	{
+		if (const unsigned failures = _recovery.frameReceived())
+			_host.log(LogLevel::Info, "Capture recovered after " + std::to_string(failures) + " failed attempt(s)");
 	}
 
 	void fail(Failure failure, const std::string& detail, bool sourceChanged = false)
@@ -230,6 +284,9 @@ private:
 	bool _retrying = false;
 	bool _waitHandle = false;
 	std::string _node;
+	unsigned _decodeFailures = 0;
+	int64_t _firstDecodeFailureMs = 0;
+	bool _awaitingDecode = false;
 };
 
 }

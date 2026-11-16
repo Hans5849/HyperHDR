@@ -1467,11 +1467,14 @@ void V4L2Grabber::newWorkerFrameErrorHandler(unsigned int workerIndex, QString e
 	_acceptTimes.completed(workerIndex, sourceCount, InternalClock::nowMicro());   // free the slot, no sample
 	Error(_log, "Frame decoding: {:s}", error);
 	returnBuffer(workerIndex, sourceCount);
+	// After the buffer is back: a persistent failure restarts capture.
+	_supervisor->decodeFailed(InternalClock::now(), error.toStdString());
 }
 
 void V4L2Grabber::newWorkerFrameHandler(unsigned int workerIndex, Image<ColorRgb> image, quint64 sourceCount, qint64 frameBegin)
 {
 	if (!_initialized || sourceCount < _generationFrame) { _stats.abandoned(); return; }
+	_supervisor->decodeSucceeded();
 	if (const auto us = _acceptTimes.completed(workerIndex, sourceCount, InternalClock::nowMicro()))
 		_stats.decoded(*us);
 	else

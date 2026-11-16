@@ -149,6 +149,10 @@ public:
 	// True when a short frame should escalate to a capture restart.
 	bool shortFrame() { return ++_shortFrames >= shortFrameLimit; }
 
+	// A complete payload arrived: ends a run of short frames without declaring
+	// the stream recovered (used while recovery waits for a successful decode).
+	void payloadOk() { _shortFrames = 0; }
+
 	// A complete frame arrived. Returns the number of failed attempts that
 	// preceded it (0 when capture was already healthy).
 	unsigned frameReceived()
