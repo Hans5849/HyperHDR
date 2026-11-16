@@ -7,7 +7,8 @@ look for, and where to attach the evidence. Background and troubleshooting:
 [instrumentation](rk3588-pipeline-instrumentation.md), [benchmark reporting](rk3588-benchmark-reporting.md).
 
 Nothing here is triggered automatically. No result counts as validated until its
-evidence is attached to the issue.
+evidence is attached to the issue. For the order of a session, and how to verify
+a downloaded board artifact, see [next board session](rk3588-board-session.md).
 
 | Class | Meaning |
 |---|---|
