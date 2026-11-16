@@ -114,7 +114,8 @@ def load(path):
                 raise InputError("%s: %s raw samples disagree with %s" % (path, c["scenario"], ", ".join(
                     "%s (file %d, recomputed %d)" % (k, c[k], got[k]) for k in bad)))
             verified += 1
-    return {"path": path, "meta": meta, "cases": cases, "verified": verified}
+    inp = (doc.get("config") or {}).get("input") or {"kind": "synthetic"}
+    return {"path": path, "meta": meta, "cases": cases, "verified": verified, "input": inp}
 
 
 def summarize(runs, baseline=None):
@@ -162,7 +163,16 @@ def summarize(runs, baseline=None):
     run_info = [{"file": r["path"], "core": core_of(r["meta"]), "label": r["meta"].get("label"),
                  "commit": r["meta"].get("commit"), "pinned_cpu": r["meta"].get("pinned_cpu"),
                  "cases": len(r["cases"]), "raw_verified": r["verified"], "conditions": conditions(r["meta"])} for r in runs]
+    # Saved raw frames (DecoderTest --input): decoder timing on bytes already in
+    # memory. Listed separately so they can't be read as live-capture results.
+    saved = []
+    for r in runs:
+        inp = r.get("input") or {}
+        if inp.get("kind") == "file":
+            saved.append({"pattern": "file:" + (inp.get("sha256") or "")[:12], "name": inp.get("name"), "sha256": inp.get("sha256"),
+                          "declared_range": inp.get("declared_range"), "file": r["path"]})
     return {"schema": "hyperhdr.bgr24-bench-summary/1", "baseline_core": base, "runs": run_info, "rows": rows,
+            "saved_frame_inputs": saved,
             "core_comparison": core_cmp, "full_vs_quarter": scale_cmp, "lut_cost": lut_cmp}
 
 
@@ -182,11 +192,17 @@ def markdown(s):
         o.append("| %s | %s | %s | %s | %d (%d) | %s |" % (r["file"], r["core"], (r["commit"] or "n/a")[:12],
                  "n/a" if r["pinned_cpu"] is None else r["pinned_cpu"], r["cases"], r["raw_verified"],
                  "; ".join(r["conditions"]) or "none"))
+    if s.get("saved_frame_inputs"):
+        o += ["", "## Saved-frame inputs", "",
+              "Patterns `file:<hash>` are decoder timings on a saved raw frame already in memory (`DecoderTest --input`). "
+              "**They are not live-capture measurements**: no V4L2 dequeue, DMA, driver or HDMI timing is included.", "",
+              "| Pattern | File | SHA-256 | Declared range | Run |", "|---|---|---|---|---|"]
+        o += ["| %s | %s | %s | %s | %s |" % (i["pattern"], i["name"], i["sha256"], i["declared_range"], i["file"]) for i in s["saved_frame_inputs"]]
     o += ["", "## Results", "", "| Core | Pattern | Range | Output | LUT | Runs | Median | P95 | Run spread | LUT lines (64 B) |",
           "|---|---|---|---|---|---:|---:|---:|---:|---:|"]
     for r in s["rows"]:
         o.append("| %s | %s | %s | %s | %s | %d | %s | %s | %s | %s |" % (
-            r["core"], r["pattern"], r["range"], r["output"], "yes" if r["lut"] else "no", r["runs"], ms(r["median_ns"]),
+            r["core"], r["pattern"] + (" (saved frame)" if r["pattern"].startswith("file:") else ""), r["range"], r["output"], "yes" if r["lut"] else "no", r["runs"], ms(r["median_ns"]),
             ms(r["p95_ns"]), "n/a" if r["spread_pct"] is None else "%.1f%%" % r["spread_pct"],
             "n/a" if r["lut_lines_64"] is None else r["lut_lines_64"]))
     if s["core_comparison"]:

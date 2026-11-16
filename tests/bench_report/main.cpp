@@ -239,7 +239,7 @@ static void rawFrames(const fs::path& tmp)
 		fromFile.input.payloadBytes = 6912;
 		CHECK(contains(json(fromFile, false), "\"kind\":\"file\",\"name\":\"scene-64x36-tight.bgr24\",\"sha256\":\"" + tight.frame->sha256 + "\""));
 		CHECK(contains(json(fromFile, false), "\"payload_bytes\":6912"));
-		CHECK(contains(text(fromFile, 1, 1), "input file: scene-64x36-tight.bgr24 sha256 " + tight.frame->sha256 + " (declared range limited)\n"));
+		CHECK(contains(text(fromFile, 1, 1), "input file: scene-64x36-tight.bgr24 sha256 " + tight.frame->sha256 + " (declared range limited; saved frame, decoder timing only, not a live-capture measurement)\n"));
 	}
 }
 

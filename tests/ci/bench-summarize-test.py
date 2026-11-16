@@ -140,5 +140,24 @@ with tempfile.TemporaryDirectory() as d:
     check(row["runs"] == 2 and row["median_ns"] == 55125000 and abs(row["spread_pct"] - 100 * 5.25 / 55.125) < 1e-9,
           "two runs: median of medians and the spread between them")
 
+# Saved-frame input (DecoderTest --input): listed apart and marked, never read
+# as a live-capture result.
+with tempfile.TemporaryDirectory() as tmp:
+    saved = copy.deepcopy(json.loads(a76.read_text()))
+    sha = "cd" * 32
+    saved["config"]["input"] = {"kind": "file", "name": "scene.bgr24", "sha256": sha, "format": "BGR24", "declared_range": "limited",
+                                "orientation": "top-down", "payload_bytes": 6912, "source": None}
+    saved["cases"] = [dict(c, pattern="file:" + sha[:12], scenario=c["scenario"].rsplit("-", 1)[0] + "-file:" + sha[:12]) for c in saved["cases"][:8]]
+    fp = pathlib.Path(tmp) / "saved.json"
+    fp.write_text(json.dumps(saved))
+    r = run(str(fp), str(a76))
+    check(r.returncode == 0 and "## Saved-frame inputs" in r.stdout and "**They are not live-capture measurements**" in r.stdout,
+          "saved-frame input: separate section stating it is not a live-capture measurement")
+    check("| file:cdcdcdcdcdcd | scene.bgr24 | " + sha + " | limited |" in r.stdout, "saved-frame input: file, full SHA-256 and declared range listed")
+    check("| Cortex-A76 | file:cdcdcdcdcdcd (saved frame) | full | full | no |" in r.stdout and "| Cortex-A76 | random | full | full | no |" in r.stdout,
+          "results: saved-frame rows marked, synthetic rows unchanged")
+    r = run(str(a76))
+    check("Saved-frame" not in r.stdout, "synthetic-only summary: no saved-frame section")
+
 print("%d failure(s)" % failures if failures else "all bench-summarize checks passed")
 sys.exit(1 if failures else 0)

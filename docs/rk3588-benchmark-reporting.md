@@ -220,6 +220,12 @@ by the source.
 `tests/bench_report/fixtures` holds two synthetic 64x36 frames made by
 `make-fixtures.py`. CI checks that they match the script byte for byte.
 
+**Saved frames are not live capture.** A `--input` run times the decoder on
+bytes already in memory: no V4L2 dequeue, DMA, driver or HDMI timing. To keep
+that visible, the text output says so on its `input file:` line, and the
+summarizer lists saved-frame inputs in their own section and marks their result
+rows `(saved frame)`.
+
 The fixtures and CI runs show that the parser and the timing path work. **They
 are not RK3588 measurements**, and a 64x36 frame says nothing about cache
 behaviour at 1080p.

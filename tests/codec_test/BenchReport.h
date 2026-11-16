@@ -378,7 +378,7 @@ inline std::string text(const Run& run, int iterations, int warmup)
 	out += b;
 	if (run.input.kind == "file")
 		out += "input file: " + run.input.name.value_or("?") + " sha256 " + run.input.sha256.value_or("?") +
-			" (declared range " + run.input.declaredRange.value_or("?") + ")\n";
+			" (declared range " + run.input.declaredRange.value_or("?") + "; saved frame, decoder timing only, not a live-capture measurement)\n";
 	std::string pattern;
 	for (const auto& c : run.cases)
 	{
