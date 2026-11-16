@@ -228,6 +228,20 @@ jobs:
             sed -n 's/^dv timings: */source timing (VIDIOC_QUERY_DV_TIMINGS): /p; s/^format: */configured capture format (VIDIOC_G_FMT): /p; s/^quantization: */configured quantization: /p; s/^receiver: */receiver node (discovered by driver, never assumed): /p' board-results/evidence-summary.txt
           } >board-results/receiver-signal.txt
 
+      # The same checks the operator runs on the downloaded artifact
+      # (docs/rk3588-board-session.md). Informational here: the benchmark step
+      # already fails the job on errors.
+      - name: Verify the artifact
+        if: always()
+        shell: bash
+        run: |
+          if command -v python3 >/dev/null; then
+            python3 scripts/rk3588/verify-board-artifact.py --commit "$GITHUB_SHA" board-results >board-results/verify.txt 2>&1 || true
+            cat board-results/verify.txt
+          else
+            echo "::notice::python3 is not on the runner: run scripts/rk3588/verify-board-artifact.py on the downloaded artifact"
+          fi
+
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v7.0.2

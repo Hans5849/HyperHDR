@@ -277,3 +277,10 @@ sudo deluser --remove-home github-runner                           # optional
 If the board is gone or reinstalled, delete the runner under **Settings → Actions
 → Runners** instead. Removing it doesn't affect GitHub-hosted CI: `push-pull.yml`
 never targets self-hosted runners.
+
+## Checking a run's artifact
+
+Download the artifact and run
+`python3 scripts/rk3588/verify-board-artifact.py --commit <sha> <dir>` before
+using its numbers. Every board job also writes the same check to `verify.txt`.
+The procedure is in [next board session](rk3588-board-session.md).

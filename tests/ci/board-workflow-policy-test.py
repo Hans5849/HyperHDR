@@ -89,6 +89,26 @@ for suite, build in (("tests/v4l2", "build-v4l2"), ("tests/bgr24", "build-bgr24"
     check(f"cmake -S {suite} -B {build}" in board_runs and f"ctest --test-dir {build}" in board_runs, f"board runs {suite} ({build})")
     check(re.search(r"rm -rf .*\b%s\b" % re.escape(build), board_runs) is not None, f"board cleans {build}")
 check("fsanitize=address,undefined" in next((s["run"] for s in board_steps if "tests/bgr24" in s.get("run", "")), ""), "BGR24 reference suite runs under ASan/UBSan")
+# Routine CI is GitHub-hosted: no other workflow may target a self-hosted runner.
+for wf_path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+    if wf_path.name == "rk3588-board.yml":
+        continue
+    runs_on = re.findall(r"runs-on:.*", wf_path.read_text())
+    check(bool(runs_on) and not any(re.search(r"self-hosted|hyperhdr-hil|orange-pi|rk3588", l) for l in runs_on),
+          f"{wf_path.name}: GitHub-hosted runners only")
+# The board is a hardware resource, not general CI (#28, owner intent
+# 2026-11-15): generic suites stay on hosted runners, including hosted ARM64.
+# Every C++ suite the board builds must also run in hosted CI, so the board is
+# never the only place a test runs.
+hosted = (ROOT / ".github/workflows/push-pull.yml").read_text()
+board_suites = set(re.findall(r"cmake -S (tests/[a-z_0-9]+)", board_runs))
+check(board_suites <= set(re.findall(r"cmake -S (tests/[a-z_0-9]+)", hosted)), f"every board suite also runs hosted ({sorted(board_suites)})")
+check(re.search(r"runner: ubuntu-[0-9.]+-arm\b", hosted) is not None, "hosted CI has a native ARM64 runner for the hardware-free suites")
+verify = [s for s in board_steps if "verify-board-artifact.py" in s.get("run", "")]
+check(len(verify) == 1 and verify[0].get("if") == "always()" and "--commit \"$GITHUB_SHA\" board-results" in verify[0]["run"],
+      "the artifact is verified in place, always, against this run's commit")
+names = [s.get("name", "") for s in board_steps]
+check(names.index(verify[0]["name"]) < names.index("Upload results") if verify else False, "verification output is uploaded with the artifact")
 check(len(bench) == 1, "one BGR24 benchmark step")
 script = bench[0]["run"]
 check(re.search(r'^\s*BUILD=build-codec\s*$', script, re.M) and re.search(r'^\s*BENCH="\$BUILD/%s/DecoderTest"\s*$' % (m.group(1) if m else "?"), script, re.M),

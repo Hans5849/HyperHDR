@@ -79,6 +79,9 @@ jobs:
           test "$(wc -l <build-bench-report/decoder.csv)" -eq 17
           if build-codec/bin/DecoderTest --bgr24-bench --jsn x; then echo '::error::unknown benchmark option accepted'; exit 1; fi
 
+      - name: Board artifact verification (fixtures built around the C++ writer's sample runs)
+        run: python3 tests/ci/verify-board-artifact-test.py build-bench-report/sample
+
       - name: Command-line parser tests (no Qt option warnings)
         run: |
           cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
