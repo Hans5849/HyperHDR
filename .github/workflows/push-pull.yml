@@ -116,6 +116,9 @@ jobs:
           cmake --build build-cli -j
           ctest --test-dir build-cli --output-on-failure
 
+      - name: Colour reference patterns (generator, manifests, preview checker)
+        run: python3 tests/ci/color-patterns-test.py
+
       - name: Debian version mapping
         run: cmake -P tests/packaging/debian-version-test.cmake
 
