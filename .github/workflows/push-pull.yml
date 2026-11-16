@@ -79,6 +79,12 @@ jobs:
           test "$(wc -l <build-bench-report/decoder.csv)" -eq 17
           if build-codec/bin/DecoderTest --bgr24-bench --jsn x; then echo '::error::unknown benchmark option accepted'; exit 1; fi
 
+      - name: LED output counters and DDP packetization (no device, no network)
+        run: |
+          cmake -S tests/led_output -B build-led-output -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-led-output -j
+          ctest --test-dir build-led-output --output-on-failure
+
       - name: Command-line parser tests (no Qt option warnings)
         run: |
           cmake -S tests/cli -B build-cli -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"

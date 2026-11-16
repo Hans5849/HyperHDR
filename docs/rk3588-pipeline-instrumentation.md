@@ -59,15 +59,18 @@ V4L2 kernel timestamp is never mixed in: it is a different clock.
 - The missed-frames figure is `n/a` until the driver's sequence number has been
   seen to change (some drivers always report 0), so a driver that doesn't count
   can't look like a perfect stream. Such a driver also reports 0 duplicates.
-- **LED output rate and DDP timing are not instrumented** and are printed as
-  `n/a (not instrumented)`.
+- **Capture-to-LED latency is not instrumented** and is printed as
+  `n/a (not instrumented)`. The LED output rate is counted separately, per LED
+  device: see [LED output statistics](led-output-stats.md).
 
-## Why LED and DDP metrics are not here
+## Why capture-to-LED latency is not here
 
-They need a frame identifier carried from the capture buffer through the
-decoded image, the LED color calculation and the LED driver's send, and DDP
-fragments one LED update into several packets that must be counted once. That
-crosses `GrabberWorker`, the image signal path, `HyperHdrInstance` and
+It needs a frame identifier carried from the capture buffer through the decoded
+image, the LED color calculation and the LED driver's send. The per-device output
+counters ([LED output statistics](led-output-stats.md)) count updates and packets
+(one DDP update can be several packets, counted once), but carry no frame
+identifier, and with smoothing an LED update blends several captures. Linking a
+capture to its LED update crosses `GrabberWorker`, the image signal path, `HyperHdrInstance` and
 `LedDevice`, which is a larger refactor than a counter and easy to get subtly
 wrong. Doing it as a fragile shortcut would produce numbers that look precise but
 aren't. Proposed follow-up: a monotonic `frameId` assigned at accept time,
@@ -106,7 +109,7 @@ The level comes from `reportLevel()`:
 Torn-down intervals are labelled `capture stats (capture stopped): ...`.
 
 ```
-capture stats: 30.0 fps dequeued, 1740 accepted, 1740 decoded, 0 decode errors, 0 abandoned by restart; discarded 60 (decimation 60, worker busy 0, LUT loading 0, workers inactive 0, driver error 0, short payload 0, undersized 0); missed by driver sequence 0; accept->decoded p50/p95/p99 4.10/5.20/6.30 ms (1740 samples); restarts 1, sequence resets 0, duplicate sequences 0; LED output rate n/a, DDP timing n/a (not instrumented)
+capture stats: 30.0 fps dequeued, 1740 accepted, 1740 decoded, 0 decode errors, 0 abandoned by restart; discarded 60 (decimation 60, worker busy 0, LUT loading 0, workers inactive 0, driver error 0, short payload 0, undersized 0); missed by driver sequence 0; accept->decoded p50/p95/p99 4.10/5.20/6.30 ms (1740 samples); restarts 1, sequence resets 0, duplicate sequences 0; LED output: see "LED output stats"; capture-to-LED latency n/a (not instrumented)
 ```
 
 (Illustrative format, not a measurement.)

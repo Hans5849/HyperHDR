@@ -297,6 +297,7 @@ void LedDevice::enableDevice(bool toEmit)
 				_isDeviceReady = true;
 				_isEnabled = true;
 				stopRetryTimer();
+				startOutputStats();
 
 				if (toEmit)
 					emit SignalEnableStateChanged(_isEnabled);
@@ -315,6 +316,9 @@ void LedDevice::stop()
 	stopRefreshTimer();
 	stopRetryTimer();
 	disable();
+	// A device stopped while in error was never disabled: close its statistics
+	// here, or the minute timer would keep reporting for a stopped device.
+	stopOutputStats("device stopped");
 
 	Info(_log, " Stopped LedDevice '{:s}'", (_activeDeviceType));
 }
@@ -338,6 +342,8 @@ void LedDevice::disableDevice(bool toEmit)
 
 		switchOff();
 		close();
+
+		stopOutputStats("device disabled");
 
 		if (toEmit)
 			emit SignalEnableStateChanged(_isEnabled);
@@ -525,6 +531,7 @@ void LedDevice::handleSignalFinalOutputColorsReady(SharedOutputColors infinityLe
 	else
 		_computeStats.incomingframes++;
 
+	_outputStats.presented(_isEnabled && _isOn && _isDeviceReady && !_isDeviceInError);
 
 	if (!_isEnabled || !_isOn || !_isDeviceReady || _isDeviceInError)
 	{
@@ -577,7 +584,11 @@ int LedDevice::rewriteLEDs()
 		}		
 
 		if (!copy->empty())
+		{
+			_outputStats.beginUpdate();
 			retval = write(copy);
+			_outputStats.endUpdate(retval);
+		}
 
 		if (_signalTerminate)
 			disableDevice(false);
@@ -834,6 +845,50 @@ QString LedDevice::getActiveDeviceType() const {
 
 bool LedDevice::componentState() const {
 	return _isEnabled;
+}
+
+// Output statistics run while the device is enabled: one line per minute from a
+// coarse timer, so an interval without output is reported too, and a final line
+// when the device is disabled. The timer only logs; it doesn't touch output timing.
+void LedDevice::startOutputStats()
+{
+	// Re-enabled after an error (setInError doesn't disable): report the interval
+	// that was running instead of discarding it.
+	if (const auto pending = _outputStats.start(InternalClock::now()))
+		logOutputStats(pending->first, pending->second, "until re-enable");
+	if (_outputStatsTimer == nullptr)
+	{
+		_outputStatsTimer = new QTimer(this);
+		_outputStatsTimer->setTimerType(Qt::CoarseTimer);
+		_outputStatsTimer->setInterval(static_cast<int>(LedOutput::Stats::intervalMs));
+		connect(_outputStatsTimer, &QTimer::timeout, this, [this]() { reportOutputStats({}); });
+	}
+	_outputStatsTimer->start();
+}
+
+void LedDevice::stopOutputStats(const std::string& context)
+{
+	if (_outputStatsTimer != nullptr)
+		_outputStatsTimer->stop();
+	_outputStats.restart();
+	if (_outputStats.running())
+		reportOutputStats(context);
+	_outputStats.end();
+}
+
+void LedDevice::reportOutputStats(const std::string& context)
+{
+	const auto [seconds, interval] = _outputStats.take(InternalClock::now());
+	logOutputStats(seconds, interval, context);
+}
+
+void LedDevice::logOutputStats(double seconds, const LedOutput::Snapshot& interval, const std::string& context)
+{
+	const std::string line = LedOutput::Stats::format(interval, seconds, context);
+	if (LedOutput::reportLevel(interval) == LedOutput::ReportLevel::Info)
+		Info(_log, "{:s}", (line));
+	else
+		Debug(_log, "{:s}", (line));
 }
 
 void LedDevice::LedStats::reset(int64_t now)
