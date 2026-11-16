@@ -784,3 +784,4 @@ endif()
 # Small deterministic decoder regression; no fixtures or capture hardware.
 enable_testing()
 add_test(NAME bgr24-decoder COMMAND DecoderTest --bgr24-check)
+add_test(NAME color-quality COMMAND DecoderTest --color-quality)

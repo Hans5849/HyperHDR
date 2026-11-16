@@ -48,6 +48,12 @@ jobs:
           cmake --build build-bgr24 -j
           ctest --test-dir build-bgr24 --output-on-failure
 
+      - name: Colour-quality references (Qt-free framework, CPU row backend, negative controls)
+        run: |
+          cmake -S tests/color_reference -B build-color-reference -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build-color-reference -j
+          ctest --test-dir build-color-reference --output-on-failure
+
       - name: BGR24 decoder regression (real FrameDecoder dispatch)
         run: |
           cmake -S tests/codec_test -B build-codec -DPLATFORM=linux -DCMAKE_BUILD_TYPE=Release -DUSE_CCACHE_CACHING=OFF -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
