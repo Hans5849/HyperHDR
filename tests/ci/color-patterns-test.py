@@ -84,10 +84,23 @@ with tempfile.TemporaryDirectory() as tmp:
     check(run("generate", "--out", a).returncode == 0 and run("generate", "--out", b).returncode == 0, "generate exits 0")
     names = sorted(p.name for p in a.iterdir())
     check(len(names) == 16 and names == sorted(p.name for p in b.iterdir()), "8 patterns, each a PNG and a manifest")
-    check(all((a / n).read_bytes() == (b / n).read_bytes() for n in names), "generation is byte-identical between runs")
+    check(all((a / n).read_bytes() == (b / n).read_bytes() for n in names), "generation is byte-identical between runs (same zlib)")
+    # Across machines the PNG bytes depend on the zlib build (zlib vs zlib-ng
+    # deflate differently), so the committed files are compared by decoded pixels
+    # and by manifest content; each manifest's sha256 must be its own PNG's.
     committed = sorted(p.name for p in SAMPLES.glob("*-1920x1080.*"))
-    check(committed == names and all((SAMPLES / n).read_bytes() == (a / n).read_bytes() for n in names),
-          "docs/color-patterns matches the generator (regenerate with: color-patterns.py generate --out docs/color-patterns)")
+
+    def same(n):
+        if n.endswith(".png"):
+            return cp.read_png((SAMPLES / n).read_bytes()) == cp.read_png((a / n).read_bytes())
+        mine, theirs = json.loads((SAMPLES / n).read_text()), json.loads((a / n).read_text())
+        own = mine.pop("sha256") == hashlib.sha256((SAMPLES / mine["file"]).read_bytes()).hexdigest()
+        theirs.pop("sha256")
+        return own and mine == theirs
+    stale = [n for n in names if n not in committed or not same(n)]
+    check(committed == names and not stale,
+          "docs/color-patterns matches the generator: same pixels and manifests (regenerate with: color-patterns.py generate --out docs/color-patterns)%s"
+          % (" - differs: " + ", ".join(stale) if stale else ""))
 
     for png_path in sorted(a.glob("*.png")):
         data = png_path.read_bytes()

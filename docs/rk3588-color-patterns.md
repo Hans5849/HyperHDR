@@ -19,8 +19,11 @@ python3 scripts/rk3588/color-patterns.py generate --out docs/color-patterns
 python3 scripts/rk3588/color-patterns.py generate --size 3840x2160 --out /tmp/patterns
 ```
 
-Generation is deterministic: the same size always gives byte-identical files.
-CI checks that the committed files match the script.
+Generation is deterministic: the same size always gives the same pixels and
+manifest regions. The PNG bytes, and so each manifest's `sha256`, can differ
+between zlib builds (zlib and zlib-ng compress differently); the `sha256` always
+identifies the PNG file next to it. CI checks that the committed files match the
+script pixel for pixel.
 
 ## What the files are, and what they are not
 
@@ -168,8 +171,9 @@ doesn't produce a colour-error figure.
 
 `tests/ci/color-patterns-test.py` runs in hosted CI and checks:
 
-- **Generation:** byte-identical between runs; the committed files are
-  current; every manifest region's centre holds exactly its stated values.
+- **Generation:** byte-identical between runs with the same zlib; the
+  committed files match the script pixel for pixel and region for region; every
+  manifest region's centre holds exactly its stated values.
 - **Range models:** they match independent formulas for all 256 values.
 - **`check` on simulated pictures:**
   - a correct decode passes

@@ -16,7 +16,9 @@ pictures. Exit status: 0 correct, 1 a problem was found or the result is
 inconclusive, 2 usage or unreadable input.
 
 Deterministic, standard library only (zlib for PNG): the same arguments always
-give byte-identical files.
+give the same pixels and manifest regions. The PNG bytes, and so the manifest's
+sha256, are byte-identical with the same zlib build; zlib and zlib-ng compress
+differently.
 
 What the pixel values mean, and what they don't
   The files hold sRGB code values, full range 0..255 per channel (PNG sRGB
