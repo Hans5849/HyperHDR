@@ -172,6 +172,12 @@ with tempfile.TemporaryDirectory() as tmp:
     half = [bytes(row[x * 6:x * 6 + 3][i] for x in range(w // 2) for i in range(3)) for row in rows[::2]]
     r = variant("half", half, w // 2, h // 2)
     check(r.returncode == 0, "preview at half size (640x360): coordinates scale, PASS")
+    # A filtered preview: area-averaged to a quarter (320x180), blending region edges
+    f = 4
+    area = [bytes((sum(rows[yy][xx * 3 + c] for yy in range(y * f, y * f + f) for xx in range(x * f, x * f + f)) + f * f // 2) // (f * f)
+                  for x in range(w // f) for c in range(3)) for y in range(h // f)]
+    r = variant("area4", area, w // f, h // f)
+    check(r.returncode == 0, "preview area-averaged to a quarter (320x180): PASS")
     noisy = [bytes(min(255, max(0, v + ((x * 7 + y * 13) % 5) - 2)) for x, v in enumerate(row)) for y, row in enumerate(rows)]
     r = variant("noise2", noisy)
     check(r.returncode == 0, "noise up to +/-2 codes: PASS at tolerance 3")

@@ -132,7 +132,9 @@ For **full**, then **limited** (and **automatic** if the source has it):
 4. Attach the screenshot, the `check` output, the source setting and the
    step-3 output to #10.
 
-The default tolerance is ±3 codes. That allows for display-path dithering and a
+The checker samples the centre half of each region, so filtered and scaled
+previews work. It was tested down to 240x135 from the 1080p pattern, with
+nearest-neighbour and area-averaged scaling. The default tolerance is ±3 codes. That allows for display-path dithering and a
 lightly compressed preview. If many regions miss by 4 or 5 and nothing else is
 wrong, the preview is probably compressed. Rerun with `--tolerance 5` and say so
 in the result. Don't raise the tolerance to hide a range or channel problem:
