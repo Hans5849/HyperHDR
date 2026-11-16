@@ -316,6 +316,9 @@ void LedDevice::stop()
 	stopRefreshTimer();
 	stopRetryTimer();
 	disable();
+	// A device stopped while in error was never disabled: close its statistics
+	// here, or the minute timer would keep reporting for a stopped device.
+	stopOutputStats("device stopped");
 
 	Info(_log, " Stopped LedDevice '{:s}'", (_activeDeviceType));
 }
@@ -849,7 +852,10 @@ bool LedDevice::componentState() const {
 // when the device is disabled. The timer only logs; it doesn't touch output timing.
 void LedDevice::startOutputStats()
 {
-	_outputStats.begin(InternalClock::now());
+	// Re-enabled after an error (setInError doesn't disable): report the interval
+	// that was running instead of discarding it.
+	if (const auto pending = _outputStats.start(InternalClock::now()))
+		logOutputStats(pending->first, pending->second, "until re-enable");
 	if (_outputStatsTimer == nullptr)
 	{
 		_outputStatsTimer = new QTimer(this);
@@ -873,6 +879,11 @@ void LedDevice::stopOutputStats(const std::string& context)
 void LedDevice::reportOutputStats(const std::string& context)
 {
 	const auto [seconds, interval] = _outputStats.take(InternalClock::now());
+	logOutputStats(seconds, interval, context);
+}
+
+void LedDevice::logOutputStats(double seconds, const LedOutput::Snapshot& interval, const std::string& context)
+{
 	const std::string line = LedOutput::Stats::format(interval, seconds, context);
 	if (LedOutput::reportLevel(interval) == LedOutput::ReportLevel::Info)
 		Info(_log, "{:s}", (line));

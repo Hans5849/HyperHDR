@@ -22,8 +22,12 @@ LED output stats: 60.0 s, presented 3600 (60.00/s); updates 3600 (60.00/s) (new 
 
 Healthy and idle intervals are logged at debug level, so set the LED device's
 log level to debug to see them. An interval with a failed update is logged at
-info level. A disabled device's last line is labelled
-`LED output stats (device disabled): ...`.
+info level, as is one where updates sent no packet. A disabled device's last
+line is labelled `LED output stats (device disabled): ...`, and a stopped one
+`(device stopped)`. A device that hit an error isn't disabled (HyperHDR keeps
+retrying), so its minute lines continue and count colours as "while inactive".
+When it's enabled again, the interval that was running is reported as
+`(until re-enable)` rather than discarded.
 
 An interval in which nothing happened is still reported:
 `LED output stats: 60.0 s, no LED output (0 presented, 0 updates)`.
@@ -38,7 +42,8 @@ An interval in which nothing happened is still reported:
 | updates | Writes started by the device. **Each update is one logical output group**, however many packets the driver splits it into. The `/s` rate is the LED output rate. |
 | new colours / repeats | Updates carrying colours not written before, versus resends of the last colours. Resends come from a refresh timer without smoothing, or from the identify blink. |
 | failed | Updates where the driver returned an error, or any packet of the update was rejected by the socket. The DDP driver itself reports success even when a packet fails, so the packet result is what counts. |
-| packets | UDP datagrams handed to the socket during updates, with the average and maximum per update. DDP splits an update into 480-LED (RGB) or 360-LED (RGBW) packets. The `wled` driver splits at 490 LEDs. |
+| sent no packet | Updates the driver accepted without error, during which a UDP device sent no datagram. For example, the `wled` driver adopting a new LED count returns success and sends nothing. Driver acceptance is not transmission. Not counted for drivers without packet counting. |
+| packets | UDP datagrams handed to the socket during updates, with the average and maximum per update. DDP splits an update into 480-LED (RGB) or 360-LED (RGBW) packets. The `wled` driver sends one DRGB datagram up to 490 LEDs, and DNRGB datagrams of 489 LEDs above that. |
 | rejected by socket | Datagrams the local socket refused or wrote short. |
 | bytes accepted | Datagram bytes, headers included, the socket accepted during updates. |
 | outside updates | Datagrams sent outside an update, such as black frames when the device is switched off. These aren't LED updates. |
@@ -61,7 +66,8 @@ HyperHDR has two drivers that can feed WLED:
 
 - **`ddp`**: DDP on UDP port 4048.
 - **`wled`**: WLED's realtime UDP protocol (DRGB, or DNRGB above 490 LEDs) on
-  WLED's realtime port, 21324 by default. It doesn't use DDP.
+  the `udpport` WLED reports in its info, 21324 by default. It doesn't use DDP.
+  Its power and state changes go over HTTP, so they aren't counted as packets.
 
 Both go through the UDP provider, so both report packets. Check the device type
 at the start of the line's log context (`LEDDEVICE_DDP` or `LEDDEVICE_WLED`)
@@ -89,10 +95,16 @@ byte-identical packets to the previous loop.
 - zero-output intervals, and unknown rates shown as n/a
 - smoothing-generated, repeated and coalesced updates
 - interval reset, flush on disable and re-enable
+- re-enable after an error: the running interval is reported, not discarded
+- `wled` driver DRGB/DNRGB datagram counts, failures through either return
+  path, and an LED-count change that sends nothing ("sent no packet")
+- independent counters for two devices
+- a guard that the driver constants these tests model (ports 21324 and 4048,
+  490/489-LED splits) are still the drivers' own
 - a 40,000-step random sequence that checks the accounting identity
 - `presented` called from another thread
 
-Mutation checks were run locally: 10 deliberate defects in the counters and the
+Mutation checks were run locally: 15 deliberate defects in the counters and the
 packetizer, each caught by the suite.
 
 `LedDevice.cpp`, `ProviderUdp.cpp` and `DriverNetDDP.cpp` need Qt, so they're

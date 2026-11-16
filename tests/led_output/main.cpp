@@ -12,6 +12,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <algorithm>
 #include <cstdint>
 #include <functional>
@@ -436,6 +439,163 @@ static void testRandomSequencesStayConsistent()
 	std::puts("ok   40000 random steps: presented == inactive + superseded + new-colour updates + pending");
 }
 
+// The wled driver (DriverNetWled::writeFiniteColors): WLED realtime UDP, not DDP.
+// Up to 490 LEDs one DRGB datagram (2-byte header); above, DNRGB datagrams of up
+// to 489 LEDs (4-byte header). A changed LED count is adopted and nothing is
+// sent (returns 0). Every datagram goes through ProviderUdp::writeBytes.
+struct WledDevice
+{
+	explicit WledDevice(LedOutput::Stats& counters) : stats(counters) {}
+	LedOutput::Stats& stats;
+	size_t configured = 300;
+	std::set<uint64_t> rejected;
+	uint64_t datagramIndex = 0;
+
+	int write(size_t leds)
+	{
+		if (leds != configured) { configured = leds; return 0; }
+		auto send = [&](size_t bytes) { const bool ok = rejected.count(datagramIndex++) == 0; stats.packet(bytes, ok); return ok ? 0 : -1; };
+		if (leds <= 490)
+			return send(2 + leds * 3);
+		for (size_t done = 0; done < leds; done += 489)
+			send(4 + std::min<size_t>(489, leds - done) * 3);
+		return int(leds * 3);
+	}
+	int update(size_t leds)
+	{
+		stats.beginUpdate();
+		const int rc = write(leds);
+		stats.endUpdate(rc);
+		return rc;
+	}
+};
+
+static void testWledDriverAccounting()
+{
+	LedOutput::Stats s;
+	s.countPackets();
+	WledDevice dev(s);
+	s.begin(0);
+	s.presented(true);
+	dev.update(300);                 // DRGB: one datagram
+	s.presented(true);
+	dev.configured = 1000;
+	dev.update(1000);                // DNRGB: 489 + 489 + 22 LEDs
+	auto [seconds, d] = s.take(1000);
+	REQUIRE(d.updates == 2 && d.packets == 4 && d.maxPacketsPerUpdate == 3);
+	REQUIRE(d.bytes == (2u + 900u) + (4u + 1467u) * 2 + (4u + 66u));
+	REQUIRE(d.failed == 0 && d.unsent == 0);
+
+	// Rejected DNRGB datagram: the driver still returns success, the update fails
+	dev.rejected = { dev.datagramIndex + 1 };
+	s.presented(true);
+	REQUIRE(dev.update(1000) > 0);
+	// Rejected DRGB datagram: the driver returns -1 itself
+	dev.configured = 300;
+	dev.rejected = { dev.datagramIndex };
+	s.presented(true);
+	REQUIRE(dev.update(300) == -1);
+	std::tie(seconds, d) = s.take(2000);
+	REQUIRE(d.updates == 2 && d.failed == 2 && d.packetFailures == 2 && d.unsent == 0);
+
+	// LED count change: the driver returns 0 and sends nothing. That is not a
+	// transmitted update, and not a failure either.
+	s.presented(true);
+	REQUIRE(dev.update(301) == 0);
+	std::tie(seconds, d) = s.take(3000);
+	REQUIRE(d.updates == 1 && d.packets == 0 && d.failed == 0 && d.unsent == 1);
+	REQUIRE(LedOutput::reportLevel(d) == LedOutput::ReportLevel::Info);
+	REQUIRE(contains(LedOutput::Stats::format(d, seconds), "failed 0, 1 sent no packet; packets 0"));
+	REQUIRE(s.consistent());
+
+	// A driver without packet counting (serial, SPI, ...) never reports "sent no packet"
+	LedOutput::Stats serial;
+	serial.begin(0);
+	serial.presented(true);
+	serial.beginUpdate();
+	serial.endUpdate(0);
+	std::tie(seconds, d) = serial.take(1000);
+	REQUIRE(d.unsent == 0 && contains(LedOutput::Stats::format(d, seconds), "packets n/a"));
+	std::puts("ok   wled driver: DRGB/DNRGB datagrams counted, failures through either return path, unsent updates separated");
+}
+
+// The packet layouts and ports modelled in these tests are the drivers' own.
+static void testDriverConstantsUnchanged()
+{
+	auto read = [](const char* rel) {
+		std::ifstream f(std::string(HYPERHDR_SOURCE_DIR) + "/" + rel);
+		return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+	};
+	const std::string wled = read("sources/led-drivers/net/DriverNetWled.cpp");
+	const std::string ddp = read("sources/led-drivers/net/DriverNetDDP.cpp");
+	REQUIRE(contains(wled, "_warlsStreamPort(21324)"));               // WLED realtime UDP default port
+	REQUIRE(contains(wled, "ledValues.size() <= 490"));                // DRGB up to 490 LEDs
+	REQUIRE(contains(wled, "489 * sizeof(ColorRgb)"));                 // DNRGB 489 LEDs per datagram
+	REQUIRE(contains(wled, "return writeBytes(wledSize, wledData.data());"));
+	REQUIRE(contains(ddp, "DDP_DEFAULT_PORT = 4048"));                 // DDP default port
+	REQUIRE(contains(ddp, "Ddp::sendFrame("));
+	std::puts("ok   driver constants: wled 21324, DRGB <= 490, DNRGB 489/datagram; ddp 4048 through Ddp::sendFrame");
+}
+
+static void testReEnableAfterErrorKeepsTheInterval()
+{
+	LedOutput::Stats s;
+	s.countPackets();
+	DdpDevice dev(s);
+	REQUIRE(!s.start(0));                  // first enable: nothing pending
+	for (int i = 0; i < 5; ++i)
+	{
+		s.presented(true);
+		dev.update();
+	}
+	dev.rejected = { dev.datagramIndex };
+	s.presented(true);
+	dev.update();                          // the failure that put the device in error
+	s.presented(false);                    // presented while in error
+	// setInError doesn't disable, so the interval is still running at re-enable
+	const auto pending = s.start(30000);
+	REQUIRE(pending.has_value());
+	if (pending)
+	{
+		REQUIRE(pending->first == 30.0);
+		REQUIRE(pending->second.updates == 6 && pending->second.failed == 1 && pending->second.inactive == 1);
+		REQUIRE(contains(LedOutput::Stats::format(pending->second, pending->first, "until re-enable"), "LED output stats (until re-enable): 30.0 s"));
+	}
+	auto [seconds, d] = s.take(90000);
+	REQUIRE(seconds == 60.0 && d.updates == 0 && d.failed == 0);   // the new interval starts clean
+	s.end();
+	REQUIRE(!s.start(100000));
+	REQUIRE(s.consistent());
+	std::puts("ok   re-enable after an error reports the running interval instead of discarding it");
+}
+
+static void testIndependentDevices()
+{
+	LedOutput::Stats a, b;
+	a.countPackets();
+	b.countPackets();
+	DdpDevice ddp(a);
+	WledDevice wled(b);
+	ddp.leds = 1000;
+	wled.configured = 600;
+	a.begin(0);
+	b.begin(0);
+	for (int i = 0; i < 10; ++i)
+	{
+		a.presented(true);
+		b.presented(true);
+		ddp.update();
+		if (i % 2 == 0)
+			wled.update(600);
+	}
+	b.presented(false);
+	const auto ra = a.take(1000).second, rb = b.take(1000).second;
+	REQUIRE(ra.presented == 10 && ra.updates == 10 && ra.packets == 30 && ra.maxPacketsPerUpdate == 3 && ra.inactive == 0);
+	REQUIRE(rb.presented == 11 && rb.updates == 5 && rb.packets == 10 && rb.maxPacketsPerUpdate == 2 && rb.inactive == 1 && rb.superseded == 4 && b.pendingFresh());
+	REQUIRE(a.consistent() && b.consistent());
+	std::puts("ok   two devices: independent counters, rates and maxima");
+}
+
 static void testPresentedFromAnotherThread()
 {
 	LedOutput::Stats s;
@@ -465,6 +625,10 @@ int main()
 	testResetAndRestart();
 	testRandomSequencesStayConsistent();
 	testPresentedFromAnotherThread();
+	testWledDriverAccounting();
+	testDriverConstantsUnchanged();
+	testReEnableAfterErrorKeepsTheInterval();
+	testIndependentDevices();
 	if (failures)
 	{
 		std::fprintf(stderr, "%d check(s) failed\n", failures);

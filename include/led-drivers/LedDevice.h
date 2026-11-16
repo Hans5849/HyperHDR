@@ -151,6 +151,7 @@ private:
 	void startOutputStats();
 	void stopOutputStats(const std::string& context);
 	void reportOutputStats(const std::string& context);
+	void logOutputStats(double seconds, const LedOutput::Snapshot& interval, const std::string& context);
 
 	QTimer* _outputStatsTimer = nullptr;
 

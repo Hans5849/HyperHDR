@@ -18,6 +18,10 @@
 //               without smoothing, identify blink); included in updates
 //   failed      updates where the driver returned an error or any packet of the
 //               update failed
+//   unsent      updates during which a packet-counting (UDP) device sent no
+//               datagram although the driver did not report an error (e.g. the
+//               wled driver adopting a new LED count returns 0 and sends
+//               nothing). Driver acceptance is not transmission.
 //   packets     datagrams the UDP socket accepted or rejected during updates
 //   packetFailures  of those, rejected (writeDatagram error or short write)
 //   bytes       datagram bytes accepted during updates (headers included)
@@ -39,6 +43,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -57,6 +62,7 @@ struct Snapshot
 	uint64_t bytes = 0;
 	uint64_t otherPackets = 0;
 	uint64_t otherPacketFailures = 0;
+	uint64_t unsent = 0;
 	uint64_t maxPacketsPerUpdate = 0;   // interval maximum, not a difference
 	bool packetsCounted = false;        // false: the driver doesn't send through
 	                                    // ProviderUdp; packet fields are unavailable
@@ -78,6 +84,7 @@ struct Snapshot
 		d.bytes = bytes - b.bytes;
 		d.otherPackets = otherPackets - b.otherPackets;
 		d.otherPacketFailures = otherPacketFailures - b.otherPacketFailures;
+		d.unsent = unsent - b.unsent;
 		d.maxPacketsPerUpdate = maxPacketsPerUpdate;
 		d.packetsCounted = packetsCounted;
 		return d;
@@ -91,7 +98,7 @@ enum class ReportLevel { Debug, Info };
 // device that stopped receiving colours is visible.
 inline ReportLevel reportLevel(const Snapshot& s)
 {
-	return (s.failed || s.packetFailures || s.otherPacketFailures) ? ReportLevel::Info : ReportLevel::Debug;
+	return (s.failed || s.packetFailures || s.otherPacketFailures || s.unsent) ? ReportLevel::Info : ReportLevel::Debug;
 }
 
 class Stats
@@ -158,6 +165,8 @@ public:
 		_inUpdate = false;
 		if (writeResult < 0 || _updatePacketFailed)
 			inc(_failed);
+		else if (_packetsCounted && _updatePackets == 0)
+			inc(_unsent);
 		if (_updatePackets > _maxPackets.load(std::memory_order_relaxed))
 			_maxPackets.store(_updatePackets, std::memory_order_relaxed);
 	}
@@ -186,6 +195,7 @@ public:
 		s.bytes = get(_bytes);
 		s.otherPackets = get(_otherPackets);
 		s.otherPacketFailures = get(_otherPacketFailures);
+		s.unsent = get(_unsent);
 		s.maxPacketsPerUpdate = get(_maxPackets);
 		s.packetsCounted = _packetsCounted;
 		return s;
@@ -208,6 +218,17 @@ public:
 		_maxPackets.store(0, std::memory_order_relaxed);
 	}
 	bool running() const { return _intervalBegin >= 0; }
+
+	// Start reporting (device enabled). When an interval is still running (the
+	// device went into error without being disabled and is now re-enabled), its
+	// counters are returned for one last report instead of being discarded.
+	std::optional<std::pair<double, Snapshot>> start(int64_t nowMs)
+	{
+		if (running())
+			return take(nowMs);
+		begin(nowMs);
+		return std::nullopt;
+	}
 	bool due(int64_t nowMs) const { return running() && nowMs - _intervalBegin >= intervalMs; }
 	void end() { _intervalBegin = -1; }
 
@@ -239,6 +260,8 @@ public:
 		out += "; updates " + num(s.updates) + rate(s.updates, seconds);
 		out += " (new colours " + num(s.freshUpdates()) + ", repeats " + num(s.repeats) + ")";
 		out += ", failed " + num(s.failed);
+		if (s.unsent)
+			out += ", " + num(s.unsent) + " sent no packet";
 		if (!s.packetsCounted)
 			return out + "; packets n/a (driver not using the UDP provider)";
 		out += "; packets " + num(s.packets);
@@ -267,7 +290,7 @@ private:
 	}
 
 	std::atomic<uint64_t> _presented{ 0 }, _inactive{ 0 }, _superseded{ 0 }, _updates{ 0 }, _repeats{ 0 }, _failed{ 0 };
-	std::atomic<uint64_t> _packets{ 0 }, _packetFailures{ 0 }, _bytes{ 0 }, _otherPackets{ 0 }, _otherPacketFailures{ 0 };
+	std::atomic<uint64_t> _packets{ 0 }, _packetFailures{ 0 }, _bytes{ 0 }, _otherPackets{ 0 }, _otherPacketFailures{ 0 }, _unsent{ 0 };
 	std::atomic<uint64_t> _maxPackets{ 0 };
 	std::atomic<bool> _fresh{ false };
 	bool _packetsCounted = false;
