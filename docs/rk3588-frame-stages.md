@@ -24,11 +24,10 @@ measure.
   - DDP send timing per update
   - whether the controller received or displayed an update (UDP has no
     acknowledgement), WLED's own frame rate, or colour accuracy
+  - any optical latency
 
   The LED output *rate* is counted (updates and packets handed to the socket,
   see [LED output statistics](led-output-stats.md)), but not yet on the board.
-  - any optical latency
-
   No document should claim these until a frame identifier is carried from capture
   to the LED driver and the result is measured on hardware. #32's instrumentation
   doc lists this as a follow-up.
