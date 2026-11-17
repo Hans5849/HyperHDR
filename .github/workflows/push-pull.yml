@@ -119,6 +119,9 @@ jobs:
       - name: Colour reference patterns (generator, manifests, preview checker)
         run: python3 tests/ci/color-patterns-test.py
 
+      - name: Optical latency analysis (synthetic recordings with known delays)
+        run: python3 tests/ci/optical-latency-test.py
+
       - name: Debian version mapping
         run: cmake -P tests/packaging/debian-version-test.cmake
 
