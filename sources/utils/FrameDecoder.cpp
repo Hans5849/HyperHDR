@@ -339,7 +339,7 @@ void FrameDecoder::applyLUT(uint8_t* _source, unsigned int width, unsigned int h
 					startSource += 3;
 				}
 			}
-			else
+			else if (sizeX != 0) // A zero-width border has no middle-row pixels to process (#57).
 			{
 				unsigned int x = 0;
 				while (startSource < endSource)
