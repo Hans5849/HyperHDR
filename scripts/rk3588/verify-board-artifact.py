@@ -25,6 +25,11 @@ Checks, each reported as PASS, WARN or FAIL:
                expbuf, no stream or EXPBUF probe in the bundle and a WARN that
                EXPBUF was not tested; with expbuf, PASS only for `expbuf=ok`
                (a failed or skipped probe is a WARN, never EXPBUF evidence)
+  signal       (probe) from receiver-signal.txt: the source timing and the
+               configured capture format, each in full, and whether they agree;
+               the configured quantization. Only WARNs: a probe without a source
+               is valid #27 evidence, but not timing or range evidence. A driver
+               default quantization is not evidence of the source's RGB range
   privacy      no access tokens or private keys anywhere; no IPv4, IPv6 or MAC
                addresses inside the archives that are supposed to be redacted;
                the --hostname and --user given appear nowhere. Hostnames can't be
@@ -84,6 +89,36 @@ def read_json(path):
 
 def cpus(text):
     return {int(t) for t in re.findall(r"\d+", text or "")}
+
+
+def signal(r, text):
+    """receiver-signal.txt: source timing vs configured format, and quantization."""
+    def field(name):
+        m = re.search(r"^%s(?: \([^)]*\))?: *(.*)$" % re.escape(name), text, re.M)
+        return m.group(1).strip() if m else None
+    timing, fmt, quant = field("source timing"), field("configured capture format"), field("configured quantization")
+    t = re.match(r"(\d+)x(\d+) (\S+), ([\d.]+) frames per second", timing or "")
+    if t:
+        r.add("PASS", "signal", "source timing %s" % timing)
+    elif timing and re.search(r"Active width", timing):
+        r.add("WARN", "signal", "source timing is incomplete (%s): collected before the full summary; read v4l2/receiver/query-dv-timings.txt in the archive" % timing)
+    elif timing:
+        r.add("WARN", "signal", "no source timing (%s): no signal at probe time? Not evidence of the source's timing; repeat with the source on" % timing)
+    else:
+        r.add("WARN", "signal", "receiver-signal.txt has no source timing line")
+    f = re.match(r"(\d+)/(\d+)", fmt or "")
+    r.ok(f is not None, "signal", "configured capture format %s" % fmt, "receiver-signal.txt has no configured capture format", level="WARN")
+    if t and f:
+        same = t.group(1, 2) == f.group(1, 2)
+        r.ok(same, "signal", "source timing and configured format are both %sx%s" % t.group(1, 2),
+             "source timing %sx%s differs from the configured format %sx%s: results describe the configured format; record which was current"
+             % (t.group(1), t.group(2), f.group(1), f.group(2)), level="WARN")
+    if not quant:
+        r.add("WARN", "signal", "receiver-signal.txt has no quantization line")
+    elif re.search(r"default", quant, re.I):
+        r.add("WARN", "signal", "quantization %r is the driver's default, not evidence of the source's RGB range: use checklist A6 and C2" % quant)
+    else:
+        r.add("PASS", "signal", "configured quantization %s (the receiver's setting; the source's actual range is checked by C2)" % quant)
 
 
 def verify(d, commit=None, hostname=None, user=None):
@@ -221,6 +256,8 @@ def verify(d, commit=None, hostname=None, user=None):
                     r.add("WARN", "probe", "EXPBUF not tested (read-only probe): this run is not EXPBUF evidence")
     elif archives:
         r.add("WARN", "probe", "tests stage with archives present: %s" % ", ".join(sorted(archives)))
+    if stage == "probe" and (d / "receiver-signal.txt").exists():
+        signal(r, (d / "receiver-signal.txt").read_text(errors="replace"))
 
     # ---------------------------------------------------------------- privacy
     leaks = []

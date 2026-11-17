@@ -36,6 +36,7 @@ expect "driver and bus" '^driver/bus: +snps_hdmirx / platform:fdee0000.hdmi_rece
 expect "power_present reported" '^power_present: 0x00000000$' power
 expect "RGB range control reported" '^rgb range: .*rx_rgb_quantization_range.*value=0' rgb
 expect "no-signal DV timings reported" '^dv timings: .*Link has been severed' dv
+expect "stored DV timings in full while no source" '^dv timings set: 1920x1080 progressive, 60.00 frames per second \(pixel clock 148500000 Hz\)$' 'dv timings set'
 expect "format and planes" "^format: +1920/1080 'BGR3'.* planes=1$" format
 expect "quantization" '^quantization: +Default' quant
 expect "kernel-level disclaimer" 'not HyperHDR preview or WLED evidence'
@@ -46,6 +47,25 @@ if grep -rqE '192\.168\.1\.50|02:42:ac:11:00:02|fe80::1c2b' "$B"; then fail "add
 grep -rqw -- "$HOST" "$B" && fail "hostname leaked" || pass "hostname redacted"
 grep -q '2026-11-14T16:31:05-0500 <host>' "$B/logs/hyperhdr-journal.txt" && pass "timestamps survive redaction" || fail "timestamps damaged: $(sed -n 2p "$B/logs/hyperhdr-journal.txt")"
 grep -q 'snps_hdmirx fdee0000.hdmi_receiver: video2 hdmi link down' "$B/logs/hyperhdr-journal.txt" && pass "bus info survives redaction" || fail "bus info damaged"
+
+# With a source: the whole timing (size, scan, rate), not just its first line.
+mkdir "$W/out2" "$W/x2"
+PATH="$W/bin:$PATH" STUB_SIGNAL=1 RK3588_EVIDENCE_NODES="/dev/video0 /dev/video1" bash "$SCRIPT" --out "$W/out2" >"$W/run2.txt" 2>&1
+tar -C "$W/x2" -xzf "$(ls "$W/out2"/rk3588-evidence-*.tar.gz | head -1)"
+S2=$(ls -d "$W/x2"/rk3588-evidence-*)/SUMMARY.txt
+grep -qE '^dv timings: +1920x1080 progressive, 60.00 frames per second \(pixel clock 148500000 Hz\)$' "$S2" &&
+	pass "source timing summarised in full (size, scan, frame rate)" || fail "source timing: $(grep -m1 '^dv timings:' "$S2")"
+# The board workflow builds receiver-signal.txt from the summary with this sed;
+# run the workflow's own expression so the two can't drift apart.
+SED=$(grep -oE "sed -n 's/\^dv timings.*' board-results/evidence-summary.txt" "$ROOT/.github/workflows/rk3588-board.yml" | sed -E "s/^sed -n '//; s/' board-results.*$//")
+if [ -n "$SED" ]; then
+	SIG=$(sed -n "$SED" "$S2")
+	echo "$SIG" | grep -qx 'source timing (VIDIOC_QUERY_DV_TIMINGS): 1920x1080 progressive, 60.00 frames per second (pixel clock 148500000 Hz)' &&
+		echo "$SIG" | grep -q "^configured capture format (VIDIOC_G_FMT): 1920/1080 'BGR3'" && ! echo "$SIG" | grep -q 'dv timings set' &&
+		pass "workflow's receiver-signal.txt gets the full source timing and the configured format" || fail "receiver-signal.txt would be: $SIG"
+else
+	fail "receiver-signal.txt sed expression not found in rk3588-board.yml"
+fi
 
 # Static read-only guarantee: no service, package or device-setting changes.
 if grep -nE 'systemctl +(stop|start|restart|disable|enable|kill)|apt(-get)? +(install|remove|purge)|dpkg +(-i|--install|-r|--remove|-P)|--set-(ctrl|fmt|dv|parm|input)|-c +[a-z_]+=|--set-edid|rm -rf +/' "$SCRIPT" | grep -v '^\s*#'; then

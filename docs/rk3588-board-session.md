@@ -117,7 +117,13 @@ Same workflow:
 
 Download and verify as in step 2, with `-n rk3588-board-probe-<run-number>`.
 The verifier also checks that both archives are present and readable, and that
-there's **no stream or EXPBUF probe** in the bundle. It reports
+there's **no stream or EXPBUF probe** in the bundle. It also reads `receiver-signal.txt`:
+the source timing (size, scan and frame rate, from `VIDIOC_QUERY_DV_TIMINGS`),
+the configured capture format (`VIDIOC_G_FMT`), whether their sizes agree, and
+the configured quantization. These are `WARN`s, never `FAIL`s: a probe with the
+source off is valid for #27, but it isn't timing evidence for #8, and a
+quantization of `Default (...)` is the driver's default, not evidence of the
+source's RGB range (that comes from A6 and C2). It reports
 `WARN probe EXPBUF not tested (read-only probe): this run is not EXPBUF evidence`,
 so a read-only probe can't be cited as an EXPBUF result.
 
@@ -142,9 +148,20 @@ With video playing for at least 15 minutes, use checklist rows:
 - **A7:** resources, now and again after step 5
 - **A9:** `LED output stats`, once #45 is merged
 
-Post A5 and A9 for the **same minutes**, side by side. They are independent
-rates and aren't a pipeline throughput (see
-[frame stages](rk3588-frame-stages.md)).
+Set the V4L2 grabber's and the LED device's log level to debug first: healthy
+intervals of both lines are logged at debug level. Then pair them offline:
+
+```sh
+journalctl -u hyperhdr@ryan -o short-iso-precise --since "-20 min" > journal.txt
+python3 scripts/rk3588/stats-align.py journal.txt
+```
+
+It prints each capture interval next to the LED interval that covers the same
+time, per LED device, and names the driver's transport (`ddp`: DDP on UDP 4048;
+`wled`: WLED realtime UDP, 21324 by default). Post that output. The two are
+independent rates and aren't a pipeline throughput (see
+[frame stages](rk3588-frame-stages.md)). The tool reports capture-to-LED latency
+and WLED receipt as not measured.
 
 ## 5. User-visible checks (the TV picture changes)
 
@@ -170,6 +187,24 @@ EXPBUF evidence. A probe that ran but failed (for example
 `expbuf=Device or resource busy`, because the receiver was still in use) or
 couldn't be built is a WARN that names the result. It is evidence of the
 failure, not of EXPBUF support.
+
+## Evidence audit (2026-11-17, master `57ca21be`)
+
+What each kind of evidence the issues ask for comes from, and what checks it
+before it's used. "Gap" is what neither the tools nor this procedure provide.
+
+| Evidence | Produced by | Checked by | Gap |
+|---|---|---|---|
+| Commit and build | `metadata.json`, `cmake-flags.txt`, each benchmark JSON and text | verifier `run`, `benchmark`: full SHA, master, `--commit`, the same commit everywhere | The installed package's commit (A2 `version`) is the operator's to compare with the run's commit |
+| Kernel, receiver identity | `metadata.json`; A2 summary (`driver/bus`, receiver found by driver name) | verifier `run` (kernel recorded); collector test | — |
+| A55/A76 affinity, thermal | preflight's pinned CPUs; JSON affinity, MIDR, governor, frequency, thermal before and after | verifier `run`, `benchmark`, `baseline` | Thermal is sampled before and after the run, not continuously |
+| Source timing vs configured format | A2 `dv timings` (now size, scan and rate), `format`; `receiver-signal.txt` | verifier `signal` (WARN if missing, incomplete or different) | Needs the source on during the probe |
+| Full/limited range | A6 `RGB range evidence` lines; C2 pattern check per source setting; A2 quantization | `color-patterns.py check`; verifier `signal` flags a driver-default quantization | The source's own setting is recorded by the operator (C2) |
+| `wled` vs `ddp` | logger `LEDDEVICE_<TYPE>` on each `LED output stats` line; A8 port filter | `stats-align.py` names the transport per device | — |
+| Capture and LED stats, same interval | A5 + A9 lines | `stats-align.py`: pairs intervals overlapping ≥ 90%, states the capture interval's rounding uncertainty | Both need debug log level (above) |
+| Benchmark and probe failures | exit status in each text file; EXPBUF result line | verifier: non-zero exit is FAIL; failed or skipped EXPBUF is WARN, never evidence | — |
+| Privacy | collector and doctor redaction | verifier `privacy` (tokens, keys, addresses, given host and user names) | Host names only with `--hostname` |
+| Unknown or unmeasured | `n/a` in both stats lines; summary disclaimers | `stats-align.py` reports missing lines as missing, not zero, and latency and WLED receipt as not measured | Optical and capture-to-LED latency: not instrumented; measurement plan for #9 and #12 in a separate PR |
 
 ## What this session can and can't close
 

@@ -77,9 +77,25 @@ def artifact(base, sample, stage="tests", expbuf=False, evidence_extra=None, exp
         files.update(evidence_extra or {})
         tar_gz(d / "rk3588-evidence-20261116T120000Z.tar.gz", "rk3588-evidence-20261116T120000Z", files)
         tar_gz(d / "hyperhdr-doctor-20261116T120001Z.tar.gz", "hyperhdr-doctor-20261116T120001Z", {"report.txt": "service ok on <host>\n"})
-        for name in ("evidence-summary.txt", "receiver-signal.txt", "doctor.txt"):
+        for name in ("evidence-summary.txt", "doctor.txt"):
             (d / name).write_text("ok\n")
+        (d / "receiver-signal.txt").write_text(SIGNAL)
     return d
+
+
+SIGNAL = """Not interchangeable: the source can send 3840x2160@30 while capture is configured for 1920x1080.
+receiver node (discovered by driver, never assumed): /dev/video1
+source timing (VIDIOC_QUERY_DV_TIMINGS): 1920x1080 progressive, 60.00 frames per second (pixel clock 148500000 Hz)
+configured capture format (VIDIOC_G_FMT): 1920/1080 'BGR3' (24-bit BGR 8-8-8) planes=1
+configured quantization: Full Range
+"""
+
+
+def signal_text(**repl):
+    text = SIGNAL
+    for old, new in repl.values():
+        text = text.replace(old, new)
+    return text
 
 
 def run(d, *extra):
@@ -192,6 +208,25 @@ with tempfile.TemporaryDirectory() as tmp:
            "doctor.txt (host or user name)", stage="probe", args=("--hostname", "opi5plus-hyperhdr-01"))
     r = run(artifact(base, sample, "probe"), "--hostname", "opi5plus-hyperhdr-01", "--user", "ryan")
     check(r.returncode == 0 and "host and user names not checked" not in r.stdout, "clean artifact with --hostname/--user: OK")
+
+    # receiver-signal.txt: source timing vs configured format, quantization (WARN only)
+    r = run(artifact(base, sample, "probe"))
+    check(r.returncode == 0 and "PASS signal source timing 1920x1080 progressive, 60.00 frames per second" in r.stdout
+          and "PASS signal source timing and configured format are both 1920x1080" in r.stdout
+          and "PASS signal configured quantization Full Range" in r.stdout and "WARN signal" not in r.stdout, "complete signal evidence: PASS")
+    def sig(desc, expect, **repl):
+        broken(desc, lambda d: (d / "receiver-signal.txt").write_text(signal_text(**repl)), expect, stage="probe", code=0)
+    sig("no source at probe time: WARN, not FAIL", "WARN signal no source timing (VIDIOC_QUERY_DV_TIMINGS: failed: Link has been severed)",
+        t=("1920x1080 progressive, 60.00 frames per second (pixel clock 148500000 Hz)", "VIDIOC_QUERY_DV_TIMINGS: failed: Link has been severed"))
+    sig("first-line-only timing from an older collector: WARN", "WARN signal source timing is incomplete (Active width: 1920)",
+        t=("1920x1080 progressive, 60.00 frames per second (pixel clock 148500000 Hz)", "\tActive width: 1920"))
+    sig("source 4K, capture configured 1080p: WARN naming both", "source timing 3840x2160 differs from the configured format 1920x1080",
+        t=("1920x1080 progressive, 60.00", "3840x2160 progressive, 30.00"))
+    sig("driver-default quantization: WARN, not range evidence", "is the driver's default, not evidence of the source's RGB range",
+        q=("configured quantization: Full Range", "configured quantization: Default (maps to Full Range)"))
+    sig("no quantization line: WARN", "WARN signal receiver-signal.txt has no quantization line", q=("configured quantization: Full Range\n", ""))
+    r = run(artifact(base, sample, "tests"))
+    check("signal" not in r.stdout, "tests stage: no signal checks")
 
     r = subprocess.run([sys.executable, str(SCRIPT), str(base / "nope")], capture_output=True, text=True)
     check(r.returncode == 2 and "unzip the artifact first" in r.stderr, "not a directory: exit 2")
