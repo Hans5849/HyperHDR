@@ -146,7 +146,12 @@ namespace VECTOR_RGB {
 				const uint32_t b = currentSourceRGB[0];
 				const uint32_t g = currentSourceRGB[1];
 				const uint32_t r = currentSourceRGB[2];
-				VECTOR_DETAIL::putLut(dest, lutBuffer, r | (g << 8) | (b << 16));
+				// 4 bytes stored except for the row's last pixel (the 4th is
+				// overwritten by the next pixel).
+				if (dest + 3 < destEnd) [[likely]]
+					VECTOR_DETAIL::putLutInner(dest, lutBuffer, r | (g << 8) | (b << 16));
+				else
+					VECTOR_DETAIL::putLutLast(dest, lutBuffer, r | (g << 8) | (b << 16));
 			}
 			else
 			{
@@ -201,7 +206,7 @@ namespace VECTOR_PACKED_YUV {
 		constexpr size_t group = quarterMode ? 2 : 4;
 		const uint8_t* src = reinterpret_cast<const uint8_t*>(currentSourceYUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode, uyvy>(load<uint32_t>(src), load<uint32_t>(src + 4), index);
 			src += 8;
 			putStep(dest, lutBuffer, index);
@@ -293,7 +298,7 @@ namespace VECTOR_I420 {
 		const uint8_t* srcU = reinterpret_cast<const uint8_t*>(currentSourceU);
 		const uint8_t* srcV = reinterpret_cast<const uint8_t*>(currentSourceV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint16_t>(srcU), load<uint16_t>(srcV), index);
 			srcY += 4; srcU += 2; srcV += 2;
 			putStep(dest, lutBuffer, index);
@@ -332,7 +337,7 @@ namespace VECTOR_NV12 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcUV), index);
 			srcY += 4; srcUV += 4;
 			putStep(dest, lutBuffer, index);
@@ -370,7 +375,7 @@ namespace VECTOR_P010 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcY + 4), load<uint32_t>(srcUV), load<uint32_t>(srcUV + 4), index);
 			srcY += 8; srcUV += 8;
 			putStep(dest, lutBuffer, index);
@@ -419,7 +424,7 @@ namespace VECTOR_P010 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group)
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; )
 		{
 			indicesToneMapped<quarterMode>(load<uint64_t>(srcY), load<uint64_t>(srcUV), lutP010_y, lutP010_uv, index);
 			srcY += 8; srcUV += 8;

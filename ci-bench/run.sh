@@ -8,12 +8,12 @@ FLAGS="-std=c++20 -O3 -DNDEBUG -include array -include utility -I. -Iinclude"
 g++ $FLAGS -DHDR='"old/utils/VectorizedDecoders.h"' -o bench-old ci-bench/kernels.cpp
 g++ $FLAGS -DHDR='<utils/VectorizedDecoders.h>' -o bench-new ci-bench/kernels.cpp
 uname -m; g++ --version | head -1; lscpu | grep -E "Model name|^CPU\(s\)" || true
-for r in 1 2 3; do ./bench-old > old-$r.txt; ./bench-new > new-$r.txt; done
+for r in 1 2 3 4 5; do ./bench-old > old-$r.txt; ./bench-new > new-$r.txt; done
 python3 - <<'PY'
 import statistics as st
 d = {}
 for v in ("old", "new"):
-    for r in (1, 2, 3):
+    for r in (1, 2, 3, 4, 5):
         for line in open(f"{v}-{r}.txt"):
             k, x = line.split(); d.setdefault((k, v), []).append(float(x))
 print("| Kernel | master ms | #64 ms | change |")
