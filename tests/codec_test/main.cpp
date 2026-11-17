@@ -26,6 +26,7 @@
 #include "SystemBgrChecks.h"
 #include "SystemDecoderChecks.h"
 #include "ApplyLutChecks.h"
+#include "VectorDecoderChecks.h"
 
 namespace FrameDecoder
 {
@@ -165,6 +166,7 @@ int main(int argc, char* argv[]) {
 	if (app.arguments().contains("--system-bgr")) return checkSystemBgr();
 	if (app.arguments().contains("--system-decoders")) return checkSystemDecoders();
 	if (app.arguments().contains("--apply-lut")) return checkApplyLut();
+	if (app.arguments().contains("--vector-decoders")) return checkVectorDecoders();
 	if (app.arguments().contains("--bgr24-bench"))
 	{
 		std::vector<std::string> args;
