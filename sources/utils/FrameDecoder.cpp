@@ -389,10 +389,10 @@ void FrameDecoder::processSystemImageBGRA(Image<ColorRgb>& image, int targetSize
 		}
 		else while (dLine < dLineEnd)
 		{
-			*((uint32_t*)&buffer) = *((uint32_t*)sLine);
+			memcpy(buffer, sLine, 3);   // B,G,R; no type-punned 4-byte load (#51)
 			sLine += divisionX;
 			ind_lutd = LUT_INDEX(buffer[2], buffer[1], buffer[0]);
-			*((uint32_t*)dLine) = *((uint32_t*)(&_lutBuffer[ind_lutd]));
+			memcpy(dLine, &_lutBuffer[ind_lutd], 3);   // one 3-byte pixel (#51)
 			dLine += 3;
 		}
 	}
@@ -467,7 +467,7 @@ void FrameDecoder::processSystemImageBGR16(Image<ColorRgb>& image, int targetSiz
 			sLine += 2;
 			while (dLine < dLineEnd)
 			{
-				*((uint16_t*)&buffer) = *((uint16_t*)sLine);
+				memcpy(buffer, sLine, 2);   // no type-punned 2-byte load (#51)
 
 				*dLine++ = (buffer[1] & 0xF8);
 				*dLine++ = (((buffer[1] & 0x7) << 3) | (buffer[0] & 0xE0) >> 5) << 2;
@@ -478,7 +478,7 @@ void FrameDecoder::processSystemImageBGR16(Image<ColorRgb>& image, int targetSiz
 		}
 		else while (dLine < dLineEnd)
 		{
-			*((uint16_t*)&buffer) = *((uint16_t*)sLine);
+			memcpy(buffer, sLine, 2);   // no type-punned 2-byte load (#51)
 			sLine += divisionX;
 
 			buffer[3] = (buffer[1] & 0xF8);
@@ -486,7 +486,7 @@ void FrameDecoder::processSystemImageBGR16(Image<ColorRgb>& image, int targetSiz
 			buffer[5] = (buffer[0] & 0x1f) << 3;
 
 			ind_lutd = LUT_INDEX(buffer[3], buffer[4], buffer[5]);
-			*((uint32_t*)dLine) = *((uint32_t*)(&_lutBuffer[ind_lutd]));
+			memcpy(dLine, &_lutBuffer[ind_lutd], 3);   // one 3-byte pixel (#51)
 			dLine += 3;
 		}
 	}
@@ -525,10 +525,10 @@ void FrameDecoder::processSystemImageRGBA(Image<ColorRgb>& image, int targetSize
 		}
 		else while (dLine < dLineEnd)
 		{
-			*((uint32_t*)&buffer) = *((uint32_t*)sLine);
+			memcpy(buffer, sLine, 3);   // R,G,B; no type-punned 4-byte load (#51)
 			sLine += divisionX;
-			ind_lutd = LUT_INDEX(buffer[2], buffer[1], buffer[0]);
-			*((uint32_t*)dLine) = *((uint32_t*)(&_lutBuffer[ind_lutd]));
+			ind_lutd = LUT_INDEX(buffer[0], buffer[1], buffer[2]);   // RGBA: red is byte 0 (#51)
+			memcpy(dLine, &_lutBuffer[ind_lutd], 3);   // one 3-byte pixel (#51)
 			dLine += 3;
 		}
 	}
@@ -556,7 +556,8 @@ void FrameDecoder::processSystemImagePQ10(Image<ColorRgb>& image, int targetSize
 		{
 			while (dLine < dLineEnd)
 			{
-				uint32_t inS = *((uint32_t*)sLine);
+				uint32_t inS;
+				memcpy(&inS, sLine, 4);   // host-order word, any alignment (#51)
 				*(dLine++) = (inS >> 2) & 0xFF;
 				*(dLine++) = (inS >> 12) & 0xFF;
 				*(dLine++) = (inS >> 22) & 0xFF;				
@@ -565,9 +566,10 @@ void FrameDecoder::processSystemImagePQ10(Image<ColorRgb>& image, int targetSize
 		}
 		else while (dLine < dLineEnd)
 		{
-			uint32_t inS = *((uint32_t*)sLine);			
+			uint32_t inS;
+			memcpy(&inS, sLine, 4);   // host-order word, any alignment (#51)
 			ind_lutd = LUT_INDEX(((inS >> 2) & 0xFF), ((inS >> 12) & 0xFF), ((inS >> 22) & 0xFF));
-			*((uint32_t*)dLine) = *((uint32_t*)(&_lutBuffer[ind_lutd]));
+			memcpy(dLine, &_lutBuffer[ind_lutd], 3);   // one 3-byte pixel (#51)
 			sLine += divisionX;
 			dLine += 3;
 		}

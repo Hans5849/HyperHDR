@@ -24,6 +24,7 @@
 #include "Bgr24Checks.h"
 #include "ColorQualityChecks.h"
 #include "SystemBgrChecks.h"
+#include "SystemDecoderChecks.h"
 
 namespace FrameDecoder
 {
@@ -161,6 +162,7 @@ int main(int argc, char* argv[]) {
 	if (app.arguments().contains("--bgr24-check")) return checkBgr24Decoder();
 	if (app.arguments().contains("--color-quality")) return checkColorQuality();
 	if (app.arguments().contains("--system-bgr")) return checkSystemBgr();
+	if (app.arguments().contains("--system-decoders")) return checkSystemDecoders();
 	if (app.arguments().contains("--bgr24-bench"))
 	{
 		std::vector<std::string> args;
