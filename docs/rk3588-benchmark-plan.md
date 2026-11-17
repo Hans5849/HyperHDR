@@ -68,8 +68,10 @@ kernel drop. For precise application capture statistics use an instrumented
 benchmark build counting DQBUF calls, buffer.sequence gaps, ERROR flags, EAGAIN,
 timeouts, short frames, worker-busy/software-decimation drops, worker completions
 and QBUF failures. Emit aggregates once per second, not a full log per frame.
-This instrumentation is future benchmark work, not present telemetry in this
-branch. Treat stream restarts as new sequence epochs and account for sequence
+Most of this now exists: the `capture stats` line (#32, see
+[pipeline instrumentation](rk3588-pipeline-instrumentation.md)) and the
+`LED output stats` line (#45). EAGAIN, timeouts and QBUF failures are not
+counted separately. Treat stream restarts as new sequence epochs and account for sequence
 wrap. Record actual V4L2 timestamp flags/domain before comparing clocks.
 
 Report capture FPS (dequeues/time), processed FPS (completed frames/time), output
@@ -78,6 +80,10 @@ For RGA separately time import/setup amortization, submission, fence wait, cache
 sync, copies and CPU LED analysis. Include those costs in totals.
 
 ## Capture-to-LED and end-to-end latency
+
+Superseded by the [latency measurement plan](rk3588-latency-measurement.md),
+which separates what is measurable today from what isn't and gives the optical
+procedure and its analysis tool. The paragraphs below are kept for context.
 
 For software capture-to-DDP latency, instrument monotonic timestamps at successful
 DQBUF, processing completion and final DDP send, associated by source sequence.

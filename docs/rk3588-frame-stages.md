@@ -28,9 +28,9 @@ measure.
 
   The LED output *rate* is counted (updates and packets handed to the socket,
   see [LED output statistics](led-output-stats.md)), but not yet on the board.
-  No document should claim these until a frame identifier is carried from capture
-  to the LED driver and the result is measured on hardware. #32's instrumentation
-  doc lists this as a follow-up.
+  No document should claim these until they are measured on hardware. How to
+  measure each, and why optical latency is measured without a frame identifier:
+  [latency measurement plan](rk3588-latency-measurement.md).
 - **Compilation and hosted CI** (x86_64 and ARM64 packages, sanitizer suites) show
   that the code builds and passes hardware-free tests. **They are not hardware
   validation.** The board status lives in
