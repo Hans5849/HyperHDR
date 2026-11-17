@@ -96,8 +96,9 @@ void FrameDecoder::processImageVector(
 			uint8_t* currentDest = destMemory + (uint64_t)destLineSize * yDest;
 			uint8_t* endDest = currentDest + destLineSize;
 
-			uint8_t* currentSource = (uint8_t*)data + (uint64_t)lineLength * ySource + (uint64_t)_cropLeft;
-			uint8_t* currentSourceUV = deltaUV + ((uint64_t)ySource / 2) * lineLength + (uint64_t)_cropLeft;
+			// 2 bytes per sample: the left crop (pixels) is twice as many bytes (#63).
+			uint8_t* currentSource = (uint8_t*)data + (uint64_t)lineLength * ySource + ((uint64_t)_cropLeft << 1);
+			uint8_t* currentSourceUV = deltaUV + ((uint64_t)ySource / 2) * lineLength + ((uint64_t)_cropLeft << 1);
 
 			if constexpr (UseAutomaticToneMapping) if (yDest % 4 == 0)
 			{
