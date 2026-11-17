@@ -68,17 +68,50 @@ namespace VECTOR_DETAIL {
 		dest += 3;
 	}
 
+	// LUT entry as a 32-bit word whose low 3 bytes are the pixel. For every
+	// index but the last, the 4th byte read is the next entry's first, inside
+	// even an exact 256^3*3 LUT; the last entry (white) is read with 3 bytes.
+	static inline uint32_t lutWord(const uint8_t* lutBuffer, uint32_t index)
+	{
+		const uint8_t* e = lutBuffer + static_cast<size_t>(index) * 3;
+		uint32_t v;
+		if (index < 0xFFFFFFu) [[likely]]
+			std::memcpy(&v, e, 4);
+		else
+			v = uint32_t(e[0]) | (uint32_t(e[1]) << 8) | (uint32_t(e[2]) << 16);
+		return v;
+	}
+
+	// A pixel that isn't the last of its step: 4 bytes stored, the 4th is
+	// overwritten by the next pixel, inside the row.
+	static inline void putLutInner(uint8_t*& dest, const uint8_t* lutBuffer, uint32_t index)
+	{
+		const uint32_t v = lutWord(lutBuffer, index);
+		std::memcpy(dest, &v, 4);
+		dest += 3;
+	}
+
+	// The last pixel of a step: exactly 3 bytes stored.
+	static inline void putLutLast(uint8_t*& dest, const uint8_t* lutBuffer, uint32_t index)
+	{
+		const uint32_t v = lutWord(lutBuffer, index);
+		std::memcpy(dest, &v, 3);
+		dest += 3;
+	}
+
 	// A whole step: 2 or 4 pixels, unrolled.
 	template<size_t N>
 	static inline void putStep(uint8_t*& dest, const uint8_t* lutBuffer, const uint32_t (&index)[N])
 	{
-		putLut(dest, lutBuffer, index[0]);
-		putLut(dest, lutBuffer, index[1]);
+		putLutInner(dest, lutBuffer, index[0]);
 		if constexpr (N == 4)
 		{
-			putLut(dest, lutBuffer, index[2]);
-			putLut(dest, lutBuffer, index[3]);
+			putLutInner(dest, lutBuffer, index[1]);
+			putLutInner(dest, lutBuffer, index[2]);
+			putLutLast(dest, lutBuffer, index[3]);
 		}
+		else
+			putLutLast(dest, lutBuffer, index[1]);
 	}
 
 	// Emits the first `count` of a step's pixels (count < group, the row's end).
