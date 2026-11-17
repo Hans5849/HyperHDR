@@ -30,7 +30,10 @@ analyze   RECORDING.csv: time in seconds, then two channels: the reference
 Reported per direction and together: count, p50/p95/p99 (nearest rank), mean,
 standard deviation, min/max, and a bootstrap 95% interval of the median (seeded,
 reproducible), plus every reference transition without an LED response and
-every LED transition without a reference. Nothing is dropped silently.
+every LED transition without a reference. Gaps in a recording (more than 5
+median sample intervals, e.g. a USB recorder losing samples) are reported, and
+a pair timed across one is listed and left out of the statistics. Nothing is
+dropped silently.
 
 Exit status: 0 at least one paired transition, 1 none, 2 usage or bad input.
 """
@@ -221,16 +224,29 @@ def analyze(path, onsets=False, lo_ms=-100.0, hi_ms=250.0, env_ms=3.0, resolutio
             meta["difference_uncertainty_ms"] = {"max": resolution_ms, "sd": resolution_ms / math.sqrt(6)}
     else:
         t, a, b = read_recording(path)
-        dt = (t[-1] - t[0]) / (len(t) - 1)
+        steps = sorted(t[i] - t[i - 1] for i in range(1, len(t)))
+        dt = steps[len(steps) // 2]   # median: a few dropouts don't change it
+        # Dropouts (a USB recorder losing samples): a crossing inside one, or
+        # within one envelope window after it, is interpolated across missing
+        # data and can be wrong by up to the gap. Those transitions are excluded.
+        gaps = [(t[i - 1], t[i]) for i in range(1, len(t)) if t[i] - t[i - 1] > 5 * dt]
         ea, eb = envelope(t, a, env_ms / 1000), envelope(t, b, env_ms / 1000)
         ref, ra, rb = transitions(t, ea)
         led, la, lb = transitions(t, eb)
         meta.update(input="recording", samples=len(t), sample_interval_ms=dt * 1000, envelope_ms=env_ms,
-                    duration_s=t[-1] - t[0], ref_levels=[ra, rb], led_levels=[la, lb])
+                    duration_s=t[-1] - t[0], ref_levels=[ra, rb], led_levels=[la, lb],
+                    gaps=len(gaps), largest_gap_ms=max((g1 - g0 for g0, g1 in gaps), default=0) * 1000)
         if ra == rb or la == lb:
             raise InputError("a channel never changes level: check the sensors and the column order (time, reference, LED)")
     pairs, missing, spurious = pair(ref, led, lo_ms / 1000, hi_ms / 1000)
-    result = {"meta": meta, "window_ms": [lo_ms, hi_ms], "ref_transitions": len(ref), "led_transitions": len(led),
+    across_gap = []
+    if not onsets and gaps:
+        window = env_ms / 1000
+        def in_gap(x):
+            return any(g0 <= x <= g1 + window for g0, g1 in gaps)
+        across_gap = [p for p in pairs if in_gap(p["time_s"]) or in_gap(p["time_s"] + p["latency_ms"] / 1000)]
+        pairs = [p for p in pairs if p not in across_gap]
+    result = {"timed_across_gap": across_gap,"meta": meta, "window_ms": [lo_ms, hi_ms], "ref_transitions": len(ref), "led_transitions": len(led),
               "paired": len(pairs), "no_led_response": missing, "led_without_reference": spurious,
               "ambiguous": sum(p["ambiguous"] for p in pairs),
               "all": summary([p["latency_ms"] for p in pairs]),
@@ -248,8 +264,12 @@ def report(r):
     m = r["meta"]
     out = []
     if m["input"] == "recording":
-        out.append("recording: %d samples over %.1f s, sample interval %.3f ms, envelope %.1f ms (both channels)"
+        out.append("recording: %d samples over %.1f s, sample interval %.3f ms (median), envelope %.1f ms (both channels)"
                    % (m["samples"], m["duration_s"], m["sample_interval_ms"], m["envelope_ms"]))
+        if m["gaps"]:
+            out.append("WARN %d gap(s) in the recording longer than 5 sample intervals (largest %.1f ms): "
+                       "%d paired transition(s) timed across one are excluded from the statistics"
+                       % (m["gaps"], m["largest_gap_ms"], len(r["timed_across_gap"])))
     else:
         out.append("onsets: %s" % ("frame interval %.2f ms: each latency uncertain by up to +-%.2f ms (SD %.2f ms)"
                                     % (m["onset_resolution_ms"], m["difference_uncertainty_ms"]["max"], m["difference_uncertainty_ms"]["sd"])

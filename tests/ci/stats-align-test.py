@@ -64,7 +64,7 @@ V4L2, DDP, WLED, SPI = "V4L2:/dev/video1", "LEDDEVICE_DDP", "LEDDEVICE_WLED", "L
 every = [jline(at(60 * (i + 1)), V4L2 if k.startswith("capture") else DDP, m) for i, (k, m) in enumerate(MSG.items())]
 r = run(every, "--json")
 js = json.loads(r.stdout)
-check(len(js["capture"]) == 4 and len(js["led"]["DDP"]) == 5 and not any("unrecognised" in n for n in js["notes"]),
+check(len(js["capture"]) == 7 and len(js["led"]["DDP"]) == 5 and not any("unrecognised" in n for n in js["notes"]),
       "every real formatter output parses", json.dumps(js["notes"]))
 check(js["not_measured"] == ["capture-to-LED latency", "WLED receipt and display", "optical latency"], "JSON names what isn't measured")
 
@@ -102,6 +102,21 @@ check(r.returncode == 1 and "No capture and LED intervals" in r.stdout, "short i
 # ACCOUNTING MISMATCH: length unknown, never paired.
 r = run([jline(at(60), V4L2, MSG["capture-mismatch"], "INFO"), jline(at(60), DDP, MSG["led"])])
 check(r.returncode == 1 and "has ACCOUNTING MISMATCH: its length can't be recovered; not paired" in r.stdout, "mismatch: not paired", r.stdout)
+
+# Low rates: the rate is printed to 0.1 fps, so the recovered length can be
+# far too uncertain to claim an overlap; a rate of 0.0 with frames is not "no frames".
+check(MSG["capture-0.1fps"].startswith("capture stats: 0.1 fps dequeued, 6 accepted") and MSG["capture-0.0fps"].startswith("capture stats: 0.0 fps dequeued, 2 accepted"),
+      "formatter rounds 6 and 2 frames per minute to 0.1 and 0.0 fps", MSG["capture-0.1fps"][:40] + " / " + MSG["capture-0.0fps"][:40])
+r = run([jline(at(60), V4L2, MSG["capture-0.1fps"]), jline(at(60), DDP, MSG["led"])])
+check(r.returncode == 1 and "6 frames at 0.1 fps, so its length is 40.0..120.0 s" in r.stdout and "too uncertain to pair at 90% overlap" in r.stdout,
+      "6 frames at 0.1 fps: length 40..120 s, not paired", r.stdout)
+r = run([jline(at(60), V4L2, MSG["capture-0.0fps"]), jline(at(60), DDP, MSG["led"])])
+check(r.returncode == 1 and "2 frames at a rate that rounds to 0.0 fps, so its length is unknown" in r.stdout and "no frames were dequeued" not in r.stdout,
+      "2 frames at 0.0 fps: reported as frames with an unknown length, not as no frames", r.stdout)
+r = run([jline(at(60), V4L2, MSG["capture-1fps"]), jline(at(60), DDP, MSG["led"])])
+check(r.returncode == 0 and "60.0 s (+-3.0 s), 1.0 fps dequeued (60 frames)" in r.stdout, "60 frames at 1.0 fps: +-3 s, paired", r.stdout)
+r = run([jline(at(60), V4L2, MSG["capture-1fps"]), jline(at(60), DDP, MSG["led"])], "--min-overlap", "0.97")
+check(r.returncode == 1 and "too uncertain to pair at 97% overlap" in r.stdout, "the same interval is too uncertain for a 97% overlap", r.stdout)
 
 # Unavailable stays n/a.
 r = run([jline(at(60), V4L2, MSG["capture-na"]), jline(at(60), SPI, MSG["led-nopackets"])])
