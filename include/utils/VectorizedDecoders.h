@@ -68,6 +68,19 @@ namespace VECTOR_DETAIL {
 		dest += 3;
 	}
 
+	// A whole step: 2 or 4 pixels, unrolled.
+	template<size_t N>
+	static inline void putStep(uint8_t*& dest, const uint8_t* lutBuffer, const uint32_t (&index)[N])
+	{
+		putLut(dest, lutBuffer, index[0]);
+		putLut(dest, lutBuffer, index[1]);
+		if constexpr (N == 4)
+		{
+			putLut(dest, lutBuffer, index[2]);
+			putLut(dest, lutBuffer, index[3]);
+		}
+	}
+
 	// Emits the first `count` of a step's pixels (count < group, the row's end).
 	template<size_t N>
 	static inline void putPartial(uint8_t*& dest, const uint8_t* lutBuffer, const uint32_t (&index)[N], size_t count)
@@ -158,8 +171,7 @@ namespace VECTOR_PACKED_YUV {
 		while (remaining(dest, destEnd) >= group) {
 			indices<quarterMode, uyvy>(load<uint32_t>(src), load<uint32_t>(src + 4), index);
 			src += 8;
-			for (size_t i = 0; i < group; ++i)
-				putLut(dest, lutBuffer, index[i]);
+			putStep(dest, lutBuffer, index);
 		}
 		if (const size_t pixels = remaining(dest, destEnd)) {
 			const size_t macropixels = quarterMode ? pixels : (pixels + 1) / 2;
@@ -251,8 +263,7 @@ namespace VECTOR_I420 {
 		while (remaining(dest, destEnd) >= group) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint16_t>(srcU), load<uint16_t>(srcV), index);
 			srcY += 4; srcU += 2; srcV += 2;
-			for (size_t i = 0; i < group; ++i)
-				putLut(dest, lutBuffer, index[i]);
+			putStep(dest, lutBuffer, index);
 		}
 		if (const size_t pixels = remaining(dest, destEnd)) {
 			const size_t pairs = VECTOR_PLANAR::chromaPairs<quarterMode>(pixels);
@@ -291,8 +302,7 @@ namespace VECTOR_NV12 {
 		while (remaining(dest, destEnd) >= group) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcUV), index);
 			srcY += 4; srcUV += 4;
-			for (size_t i = 0; i < group; ++i)
-				putLut(dest, lutBuffer, index[i]);
+			putStep(dest, lutBuffer, index);
 		}
 		if (const size_t pixels = remaining(dest, destEnd)) {
 			indices<quarterMode>(loadPartial<uint32_t>(srcY, VECTOR_PLANAR::ySamples<quarterMode>(pixels)),
@@ -330,8 +340,7 @@ namespace VECTOR_P010 {
 		while (remaining(dest, destEnd) >= group) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcY + 4), load<uint32_t>(srcUV), load<uint32_t>(srcUV + 4), index);
 			srcY += 8; srcUV += 8;
-			for (size_t i = 0; i < group; ++i)
-				putLut(dest, lutBuffer, index[i]);
+			putStep(dest, lutBuffer, index);
 		}
 		if (const size_t pixels = remaining(dest, destEnd)) {
 			const size_t yBytes = 2 * VECTOR_PLANAR::ySamples<quarterMode>(pixels);
@@ -381,8 +390,7 @@ namespace VECTOR_P010 {
 		{
 			indicesToneMapped<quarterMode>(load<uint64_t>(srcY), load<uint64_t>(srcUV), lutP010_y, lutP010_uv, index);
 			srcY += 8; srcUV += 8;
-			for (size_t i = 0; i < group; ++i)
-				putLut(dest, lutBuffer, index[i]);
+			putStep(dest, lutBuffer, index);
 		}
 		if (const size_t pixels = remaining(dest, destEnd))
 		{
