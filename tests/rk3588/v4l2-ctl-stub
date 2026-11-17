@@ -10,8 +10,14 @@ case "$dev:${args[0]}" in
 	/dev/video0:--info) printf 'Driver Info:\n\tDriver name      : rkvdec\n\tBus info         : platform:rkvdec\n\t\tVideo Memory-to-Memory Multiplanar\n';;
 	/dev/video1:--list-formats-ext) printf "ioctl: VIDIOC_ENUM_FMT\n\tType: Video Capture Multiplanar\n\n\t[0]: 'BGR3' (24-bit BGR 8-8-8)\n";;
 	/dev/video1:--get-fmt-video) printf "Format Video Capture Multiplanar:\n\tWidth/Height      : 1920/1080\n\tPixel Format      : 'BGR3' (24-bit BGR 8-8-8)\n\tNumber of planes  : 1\n\tQuantization      : Default (maps to Full Range)\n";;
-	/dev/video1:--query-dv-timings) echo "VIDIOC_QUERY_DV_TIMINGS: failed: Link has been severed" >&2; exit 255;;
-	/dev/video1:--get-dv-timings) printf '\tActive width: 1920\n\tActive height: 1080\n';;
+	/dev/video1:--query-dv-timings|/dev/video1:--get-dv-timings)
+		# STUB_SIGNAL=1: a 1080p60 source, laid out like v4l2-ctl's print_dv_timings.
+		# Otherwise no source: the query fails, the stored timings remain.
+		if [ "${STUB_SIGNAL:-0}" = 1 ] || [ "${args[0]}" = --get-dv-timings ]; then
+			printf '\tActive width: 1920\n\tActive height: 1080\n\tTotal width: 2200\n\tTotal height: 1125\n\tFrame format: progressive\n\tPolarities: +vsync +hsync\n\tPixelclock: 148500000 Hz (60.00 frames per second)\n\tHorizontal frontporch: 88\n'
+		else
+			echo "VIDIOC_QUERY_DV_TIMINGS: failed: Link has been severed" >&2; exit 255
+		fi;;
 	/dev/video1:--list-ctrls-menus) printf '\nDigital Video Controls\n\n                  power_present 0x00a00964 (bitmask)  : max=0x00000001 default=0x00000000 value=0x00000000 flags=read-only, volatile\n rx_rgb_quantization_range 0x00a00965 (menu) : min=0 max=2 default=0 value=0 (Automatic) flags=read-only\n';;
 	*) echo "stub: unhandled $dev ${args[*]}" >&2; exit 1;;
 esac

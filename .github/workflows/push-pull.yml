@@ -125,6 +125,9 @@ jobs:
       - name: Board artifact verification (fixtures built around the C++ writer's sample runs)
         run: python3 tests/ci/verify-board-artifact-test.py build-bench-report/sample
 
+      - name: Capture and LED statistics alignment (real formatter output, no board)
+        run: python3 tests/ci/stats-align-test.py
+
       - name: RK3588 evidence collector (stub board, redaction, read-only)
         run: bash tests/rk3588/collect-evidence-test.sh
 

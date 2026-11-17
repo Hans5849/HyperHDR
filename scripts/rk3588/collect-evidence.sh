@@ -142,6 +142,21 @@ capture logs/hyperhdr-journal.txt journalctl --no-pager -o short-iso --since "-$
 # --- summary ---------------------------------------------------------------
 val() { grep -m1 -E "$2" "$BUNDLE/$1" 2>/dev/null | sed -E "s|.*$2 *||" | tr -s ' \t' '  '; }
 line() { grep -m1 -E "$2" "$BUNDLE/$1" 2>/dev/null | tr -s ' \t' '  ' | sed -E 's/^ //'; }
+# Whole timing on one line: "1920x1080 progressive, 60.00 frames per second
+# (pixel clock 148500000 Hz)". Without "Active width" (no signal, or the query
+# failed) the command's first output line, which holds the error.
+timings() {
+	local w h
+	w=$(val "$1" 'Active width:'); h=$(val "$1" 'Active height:')
+	if [ -n "$w" ] && [ -n "$h" ]; then
+		local scan fps clk
+		scan=$(val "$1" 'Frame format:'); clk=$(grep -m1 -oE 'Pixelclock: *[0-9]+ Hz' "$BUNDLE/$1" | grep -oE '[0-9]+')
+		fps=$(grep -m1 -oE '[0-9.]+ frames per second' "$BUNDLE/$1")
+		echo "${w}x${h} ${scan:-scan unknown}, ${fps:-frame rate unknown}${clk:+ (pixel clock $clk Hz)}"
+	else
+		sed -n 2p "$BUNDLE/$1" 2>/dev/null
+	fi
+}
 {
 	echo "RK3588 evidence $STAMP"
 	echo "model:        $(cat "$BUNDLE/system/model.txt" 2>/dev/null)"
@@ -156,7 +171,8 @@ line() { grep -m1 -E "$2" "$BUNDLE/$1" 2>/dev/null | tr -s ' \t' '  ' | sed -E '
 		echo "driver/bus:   $(val v4l2/receiver/all.txt 'Driver name *:') / $(val v4l2/receiver/all.txt 'Bus info *:')"
 		echo "power_present:$(val v4l2/receiver/controls.txt 'power_present.*value=' | awk '{print " "$1}')"
 		echo "rgb range:    $(line v4l2/receiver/controls.txt 'rgb.*range|quantization_range')"
-		echo "dv timings:   $(sed -n 2p "$BUNDLE/v4l2/receiver/query-dv-timings.txt" 2>/dev/null)"
+		echo "dv timings:   $(timings v4l2/receiver/query-dv-timings.txt)"
+		echo "dv timings set: $(timings v4l2/receiver/get-dv-timings.txt)"
 		echo "format:       $(val v4l2/receiver/fmt.txt 'Width/Height *:') $(val v4l2/receiver/fmt.txt 'Pixel Format *:') planes=$(val v4l2/receiver/fmt.txt 'Number of planes *:')"
 		echo "quantization: $(val v4l2/receiver/fmt.txt 'Quantization *:')"
 		echo "holders:      $(tail -n +2 "$BUNDLE/v4l2/receiver/holders.txt" 2>/dev/null | grep -v '^\[exit' | tr -s ' \n' ' ')"
