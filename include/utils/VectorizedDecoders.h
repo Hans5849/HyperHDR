@@ -62,22 +62,63 @@ namespace VECTOR_DETAIL {
 		return v;
 	}
 
+	constexpr uint32_t lastLutIndex = 0xFFFFFFu;
+
+	// The LUT entry for `index` (not the last one) in the low 3 bytes of a
+	// word: one 4-byte read, whose 4th byte is the next entry's first, so it
+	// stays inside the 256^3*3 LUT.
+	static inline uint32_t lutWord(const uint8_t* lutBuffer, uint32_t index)
+	{
+		uint32_t v;
+		std::memcpy(&v, lutBuffer + static_cast<size_t>(index) * 3, 4);
+		return v;
+	}
+
+	// One pixel, any index: exactly 3 bytes read and 3 written.
 	static inline void putLut(uint8_t*& dest, const uint8_t* lutBuffer, uint32_t index)
 	{
 		std::memcpy(dest, lutBuffer + static_cast<size_t>(index) * 3, 3);
 		dest += 3;
 	}
 
-	// A whole step: 2 or 4 pixels, unrolled.
+	// A whole step. When none of its indices is the LUT's last entry (for YUV
+	// input that is Y = U = V = 255, practically never), each entry is one
+	// 4-byte read inside the LUT and the pixels are packed: 4 pixels are
+	// exactly 12 bytes, written as three 4-byte words; 2 pixels (quarter mode)
+	// exactly 6 bytes. Otherwise every pixel is copied with exactly 3 bytes.
+	// Nothing is read outside the LUT or written past the step.
 	template<size_t N>
 	static inline void putStep(uint8_t*& dest, const uint8_t* lutBuffer, const uint32_t (&index)[N])
 	{
-		putLut(dest, lutBuffer, index[0]);
-		putLut(dest, lutBuffer, index[1]);
+		uint32_t any = 0;
+		for (size_t i = 0; i < N; ++i)
+			any |= index[i] + 1;            // bit 24 set only for the last index
+		if (any >> 24) [[unlikely]]
+		{
+			for (size_t i = 0; i < N; ++i)
+				putLut(dest, lutBuffer, index[i]);
+			return;
+		}
+		const uint32_t a = lutWord(lutBuffer, index[0]);
+		const uint32_t b = lutWord(lutBuffer, index[1]);
+		const uint32_t w0 = (a & 0x00FF'FFFFu) | (b << 24);
 		if constexpr (N == 4)
 		{
-			putLut(dest, lutBuffer, index[2]);
-			putLut(dest, lutBuffer, index[3]);
+			const uint32_t c = lutWord(lutBuffer, index[2]);
+			const uint32_t d = lutWord(lutBuffer, index[3]);
+			const uint32_t w1 = ((b >> 8) & 0xFFFFu) | (c << 16);
+			const uint32_t w2 = ((c >> 16) & 0xFFu) | (d << 8);
+			std::memcpy(dest, &w0, 4);
+			std::memcpy(dest + 4, &w1, 4);
+			std::memcpy(dest + 8, &w2, 4);
+			dest += 12;
+		}
+		else
+		{
+			const uint16_t w1 = static_cast<uint16_t>(b >> 8);
+			std::memcpy(dest, &w0, 4);
+			std::memcpy(dest + 4, &w1, 2);
+			dest += 6;
 		}
 	}
 
@@ -168,7 +209,7 @@ namespace VECTOR_PACKED_YUV {
 		constexpr size_t group = quarterMode ? 2 : 4;
 		const uint8_t* src = reinterpret_cast<const uint8_t*>(currentSourceYUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode, uyvy>(load<uint32_t>(src), load<uint32_t>(src + 4), index);
 			src += 8;
 			putStep(dest, lutBuffer, index);
@@ -260,7 +301,7 @@ namespace VECTOR_I420 {
 		const uint8_t* srcU = reinterpret_cast<const uint8_t*>(currentSourceU);
 		const uint8_t* srcV = reinterpret_cast<const uint8_t*>(currentSourceV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint16_t>(srcU), load<uint16_t>(srcV), index);
 			srcY += 4; srcU += 2; srcV += 2;
 			putStep(dest, lutBuffer, index);
@@ -299,7 +340,7 @@ namespace VECTOR_NV12 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcUV), index);
 			srcY += 4; srcUV += 4;
 			putStep(dest, lutBuffer, index);
@@ -337,7 +378,7 @@ namespace VECTOR_P010 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group) {
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; ) {
 			indices<quarterMode>(load<uint32_t>(srcY), load<uint32_t>(srcY + 4), load<uint32_t>(srcUV), load<uint32_t>(srcUV + 4), index);
 			srcY += 8; srcUV += 8;
 			putStep(dest, lutBuffer, index);
@@ -386,7 +427,7 @@ namespace VECTOR_P010 {
 		const uint8_t* srcY = reinterpret_cast<const uint8_t*>(currentSourceY);
 		const uint8_t* srcUV = reinterpret_cast<const uint8_t*>(currentSourceUV);
 		uint32_t index[group];
-		while (remaining(dest, destEnd) >= group)
+		for (const uint8_t* const wholeEnd = dest + remaining(dest, destEnd) / group * group * 3; dest < wholeEnd; )
 		{
 			indicesToneMapped<quarterMode>(load<uint64_t>(srcY), load<uint64_t>(srcUV), lutP010_y, lutP010_uv, index);
 			srcY += 8; srcUV += 8;
