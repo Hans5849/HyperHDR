@@ -1,5 +1,9 @@
 # Next board session: operator procedure
 
+For the full release-candidate acceptance run (backup, preview, colour, LEDs,
+recovery, 30-minute soak, evidence), see [acceptance run](rk3588-acceptance-run.md).
+This page covers the board workflow stages and artifact verification in detail.
+
 The exact steps for the next Orange Pi 5 Plus session. Issues: #28 (runner),
 #27 (diagnostics), #9 and #12 (benchmark), #8 and #10 (capture and colour),
 #11 and #19 (recovery), #18 (release readiness).
@@ -146,7 +150,7 @@ With video playing for at least 15 minutes, use checklist rows:
 - **A5:** `capture stats`
 - **A6:** range evidence
 - **A7:** resources, now and again after step 5
-- **A9:** `LED output stats`, once #45 is merged
+- **A9:** `LED output stats`
 
 Set the V4L2 grabber's and the LED device's log level to debug first: healthy
 intervals of both lines are logged at debug level. Then pair them offline:
@@ -166,7 +170,7 @@ and WLED receipt as not measured.
 ## 5. User-visible checks (the TV picture changes)
 
 Checklist rows **C1, C2, C5** with the
-[colour reference patterns](rk3588-color-patterns.md), once #47 is merged:
+[colour reference patterns](rk3588-color-patterns.md):
 
 - one `check` run per source RGB-range setting
 - LED photos
