@@ -215,6 +215,23 @@ namespace VECTOR_NV12 {
 }
 
 namespace VECTOR_P010 {
+	// Same widths and values as the type-punned accesses they replace, without
+	// assuming alignment (P010 rows start at crop-dependent offsets, pixels
+	// every 3 bytes). Bounds are unchanged: see #61.
+	template<typename T>
+	static inline T loadWord(const T* p)
+	{
+		T v;
+		std::memcpy(&v, p, sizeof(T));
+		return v;
+	}
+
+	static inline void copyWord(uint8_t* dest, const uint8_t* src)
+	{
+		uint32_t v;
+		std::memcpy(&v, src, 4);
+		std::memcpy(dest, &v, 4);
+	}
 
 	template<bool quarterMode>
 	static inline void process(
@@ -226,10 +243,10 @@ namespace VECTOR_P010 {
 	)
 	{
 		while (dest < destEnd) {
-			const uint32_t y0 = *(currentSourceY++);
-			const uint32_t y1 = *(currentSourceY++);
-			const uint32_t uv0 = *(currentSourceUV++);
-			const uint32_t uv1 = *(currentSourceUV++);
+			const uint32_t y0 = loadWord(currentSourceY++);
+			const uint32_t y1 = loadWord(currentSourceY++);
+			const uint32_t uv0 = loadWord(currentSourceUV++);
+			const uint32_t uv1 = loadWord(currentSourceUV++);
 
 			const uint32_t u0 = (uv0 >> 8) & 0xFF;
 			const uint32_t v0 = (uv0 >> 24);
@@ -243,13 +260,13 @@ namespace VECTOR_P010 {
 			const uint32_t y11 = (y1 >> 24);
 			const uint32_t base1 = (u1 << 8) | (v1 << 16);
 
-			*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base0 | y00) * 3]); dest += 3;
+			copyWord(dest, &lutBuffer[(base0 | y00) * 3]); dest += 3;
 			if constexpr (!quarterMode)
-				{*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base0 | y01) * 3]); dest += 3;}
+				{copyWord(dest, &lutBuffer[(base0 | y01) * 3]); dest += 3;}
 
-			*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base1 | y10) * 3]); dest += 3;
+			copyWord(dest, &lutBuffer[(base1 | y10) * 3]); dest += 3;
 			if constexpr (!quarterMode)
-				{*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base1 | y11) * 3]); dest += 3;}
+				{copyWord(dest, &lutBuffer[(base1 | y11) * 3]); dest += 3;}
 
 		}
 	}
@@ -267,8 +284,8 @@ namespace VECTOR_P010 {
 	{
 		while (dest < destEnd)
 		{
-			const uint64_t y = *(currentSourceY++);
-			const uint64_t uv = *(currentSourceUV++);
+			const uint64_t y = loadWord(currentSourceY++);
+			const uint64_t uv = loadWord(currentSourceUV++);
 
 			const uint32_t u0 = lutP010_uv[(uv & 0xFF'FF) >> 6];
 			const uint32_t v0 = lutP010_uv[(uv & 0xFF'FF'00'00) >> (16 + 6)];
@@ -282,13 +299,13 @@ namespace VECTOR_P010 {
 			const uint32_t y11 = lutP010_y[y >> (16 + 6 + 32)];
 			const uint32_t base1 = (u1 << 8) | (v1 << 16);
 
-			*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base0 | y00) * 3]); dest += 3;
+			copyWord(dest, &lutBuffer[(base0 | y00) * 3]); dest += 3;
 			if constexpr (!quarterMode)
-				{*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base0 | y01) * 3]); dest += 3;}
+				{copyWord(dest, &lutBuffer[(base0 | y01) * 3]); dest += 3;}
 
-			*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base1 | y10) * 3]); dest += 3;
+			copyWord(dest, &lutBuffer[(base1 | y10) * 3]); dest += 3;
 			if constexpr (!quarterMode)
-				{*reinterpret_cast<uint32_t*>(dest) = *reinterpret_cast<const uint32_t*>(&lutBuffer[(base1 | y11) * 3]); dest += 3;}
+				{copyWord(dest, &lutBuffer[(base1 | y11) * 3]); dest += 3;}
 		}
 	}
 }
