@@ -102,7 +102,7 @@ sudo apt-get install build-essential cmake ninja-build git pkg-config python3 \
 
 git clone --recursive https://github.com/Hans5849/HyperHDR.git
 cd HyperHDR
-git checkout <release-candidate commit>   # the exact master commit under test
+git checkout "$(git rev-parse origin/master)"   # pin the current master commit
 git submodule update --init --recursive
 cmake -S . -B build -G Ninja -DPLATFORM=linux -DENABLE_V4L2=ON \
   -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_FLATBUFFERS_LIBS=ON
@@ -111,7 +111,7 @@ cmake --build build
 ```
 
 Build `master`, pinned to the commit being validated, so every result names one
-commit. For an existing checkout: `git fetch origin && git checkout <commit> &&
+commit. For an existing checkout: `git fetch origin && git checkout "$(git rev-parse origin/master)" &&
 git submodule update --init --recursive`. (Earlier versions of this guide built a
 development branch that has since been merged.)
 
