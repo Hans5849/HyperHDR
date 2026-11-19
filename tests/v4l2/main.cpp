@@ -686,6 +686,30 @@ int main()
 		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == Recovery::sourceChangeDelayMs);
 		REQUIRE(r.host.count(LogLevel::Info, "source changed: input timing or format changed; restarting capture in 500 ms") == 1);
 	});
+	test("supervisor: a device that can't report its signal backs off on a stall, never waits", [] {
+		// USB grabbers and drivers without DV timings or power_present report
+		// Signal::Unknown. A stall then is a timeout with the capped backoff;
+		// only a reported absence pauses capture in the signal wait.
+		Rig r;
+		r.step([&] { r.sup.start(); });
+		r.step([&] { r.sup.stalled({ Signal::Unknown, "" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == Recovery::initialDelayMs);
+		REQUIRE(r.host.count(LogLevel::Warning, "no frames for five seconds; retrying capture in 3000 ms") == 1);
+		REQUIRE(r.host.opens == 0 && !r.host.polling);
+		r.step([&] { r.sup.retryTimerFired(); });
+		REQUIRE(r.sup.state() == Supervisor::State::Streaming);
+		r.step([&] { r.sup.stalled({ Signal::Unknown, "QUERY_DV_TIMINGS: ENOTTY" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.retryMs == 6000);
+		REQUIRE(r.host.opens == 0);
+		r.step([&] { r.sup.retryTimerFired(); });
+		r.step([&] { r.sup.sourceEvent(false, { Signal::Unknown, "" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::Backoff && r.host.opens == 0);
+		REQUIRE(r.host.count(LogLevel::Warning, "source event notification without a readable event") == 1);
+		// The same stall with a reported absence waits instead.
+		r.step([&] { r.sup.retryTimerFired(); });
+		r.step([&] { r.sup.stalled({ Signal::Absent, "no source detected (power_present=0)" }); });
+		REQUIRE(r.sup.state() == Supervisor::State::WaitingForSignal && r.host.opens == 1 && r.host.retryMs < 0);
+	});
 	test("supervisor: failure categories from start and streaming", [] {
 		Rig r; r.host.script = { FakeHost::Next::InitFail, FakeHost::Next::Generic };
 		r.step([&] { r.sup.start(); });
@@ -840,29 +864,52 @@ int main()
 		REQUIRE(r.host.stops >= r.host.starts - 1);   // every start was matched by a stop
 	});
 	test("supervisor: randomized events keep state and resources consistent", [] {
+		// Every input the grabber can deliver, in any order and state, including
+		// stale timers and events (they fire whether or not one is armed), decode
+		// results from workers (late failures included), and receivers that can't
+		// say whether a signal is present.
 		using Next = FakeHost::Next;
 		uint32_t seed = 0x2545f491u;
 		auto rnd = [&] { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; return seed; };
+		auto signal = [&](unsigned absentIn3) {
+			const unsigned v = rnd() % 6;
+			return v < absentIn3 * 2 ? Signal::Absent : (v == 5 ? Signal::Unknown : Signal::Present);
+		};
 		Rig r;
-		unsigned lastStarts = 0, maxPending = 0;
-		for (int step = 0; step < 40000; ++step)
+		unsigned lastStarts = 0, maxPending = 0, delays = 0, decodeRestarts = 0, waits = 0;
+		int64_t nowMs = 0;
+		for (int step = 0; step < 60000; ++step)
 		{
-			const unsigned action = rnd() % 9;
+			const unsigned action = rnd() % 12;
 			if (r.host.script.size() < 2 && rnd() % 2)
 				r.host.script.push_back(static_cast<Next>(rnd() % 5));
-			r.host.waiting = { rnd() % 3 ? Signal::Absent : Signal::Present, "random" };
+			r.host.waiting = { signal(2), "random" };
 			r.host.nodeOpens = rnd() % 4 != 0;
+			nowMs += rnd() % 400;
 			const bool mayStart = action <= 2;
+			const auto before = r.sup.state();
+			const unsigned failuresBefore = r.sup.consecutiveDecodeFailures();
+			const bool awaitingBefore = r.sup.awaitingDecode();
 			switch (action)
 			{
 				case 0: r.sup.start(); break;
 				case 1: r.sup.retryTimerFired(); break;
 				case 2: r.sup.signalPollFired(); break;
-				case 3: r.sup.stalled({ rnd() % 2 ? Signal::Absent : Signal::Present, "stall" }); break;
-				case 4: r.sup.sourceEvent(rnd() % 2, { rnd() % 3 ? Signal::Present : Signal::Absent, "event" }); break;
+				case 3: r.sup.stalled({ signal(1), "stall" }); break;
+				case 4: r.sup.sourceEvent(rnd() % 2, { signal(1), "event" }); break;
 				case 5: r.sup.streamFailed("random stream error"); break;
 				case 6: r.sup.frameReceived(); break;
 				case 7: if (rnd() % 4 == 0) r.sup.stop(); break;
+				case 8: r.sup.decodeFailed(nowMs, "random decode error"); break;
+				case 9:   // a source whose frames stop decoding: long enough to trip the restart
+					for (unsigned i = 0; i < Supervisor::decodeFailureLimit + 5; ++i)
+						r.sup.decodeFailed(nowMs += 200, "burst");
+					break;
+				// The grabber drops worker results unless capture is initialized
+				// (V4L2Grabber::newWorkerFrame: !_initialized || stale generation).
+				// decodeFailed() also ignores them itself; decodeSucceeded() relies on
+				// that guard, so it is delivered only while capture is held.
+				case 10: if (r.host.capture) r.sup.decodeSucceeded(); break;
 				default: r.sup.shortFrame(); break;
 			}
 			r.host.invariant();                                             // at most one of capture / retry timer / signal wait
@@ -874,16 +921,37 @@ int main()
 				case Supervisor::State::Streaming:
 					REQUIRE(r.host.capture && r.host.retryMs < 0 && !r.host.polling); break;
 				case Supervisor::State::Backoff:
-					REQUIRE(!r.host.capture && r.host.retryMs > 0 && !r.host.polling); break;
+					// Never a busy loop and never stuck: one retry, at the source-change
+					// delay or within the capped exponential range.
+					REQUIRE(!r.host.capture && !r.host.polling);
+					REQUIRE(r.host.retryMs == Recovery::sourceChangeDelayMs ||
+						(r.host.retryMs >= Recovery::initialDelayMs && r.host.retryMs <= Recovery::maximumDelayMs));
+					++delays;
+					break;
 				case Supervisor::State::WaitingForSignal:
-					REQUIRE(!r.host.capture && r.host.retryMs < 0 && r.host.polling); break;
+					REQUIRE(!r.host.capture && r.host.retryMs < 0 && r.host.polling); ++waits; break;
 			}
+			// Decode results from workers outside streaming (late, after a stop or
+			// restart) change nothing.
+			if ((action == 8 || action == 9) && before != Supervisor::State::Streaming)
+			{
+				REQUIRE(r.sup.state() == before);
+				REQUIRE(r.sup.consecutiveDecodeFailures() == failuresBefore);
+				REQUIRE(r.sup.awaitingDecode() == awaitingBefore);
+			}
+			if (action == 8 || action == 9)
+				decodeRestarts += before == Supervisor::State::Streaming && r.sup.state() == Supervisor::State::Backoff;
+			// An explicit stop forgets decode state as well as resources.
+			if (action == 7 && r.sup.state() == Supervisor::State::Stopped && before != Supervisor::State::Stopped)
+				REQUIRE(r.sup.consecutiveDecodeFailures() == 0 && !r.sup.awaitingDecode());
 			// No busy polling or hidden restarts: a capture attempt happens only on an
 			// explicit start, the retry timer or a signal poll.
 			if (!mayStart) REQUIRE(r.host.starts == lastStarts);
 			lastStarts = r.host.starts;
 		}
 		REQUIRE(maxPending <= 1);
+		// The walk reached every state and the decode-failure restart path.
+		REQUIRE(delays > 0 && waits > 0 && decodeRestarts > 0);
 	});
 	test("1080p/4K source timing transitions: negotiation and payload sizes", [] {
 		struct TimingDriver : Operations {

@@ -25,6 +25,14 @@ int main()
 	V4L2Capture::StatsSnapshot bad = c; bad.dequeued = 1801;   // dequeued != accepted + discarded
 	std::printf("capture-mismatch|%s\n", V4L2Capture::Stats::format(bad, 60.0).c_str());
 
+	// A source that barely delivers: the 0.1 fps rounding dominates the length.
+	V4L2Capture::StatsSnapshot slow; slow.dequeued = 6; slow.accepted = 6; slow.decoded = 6; slow.durationSamples = 6;
+	std::printf("capture-0.1fps|%s\n", V4L2Capture::Stats::format(slow, 60.0).c_str());
+	V4L2Capture::StatsSnapshot zero; zero.dequeued = 2; zero.accepted = 2; zero.decoded = 2; zero.durationSamples = 2;
+	std::printf("capture-0.0fps|%s\n", V4L2Capture::Stats::format(zero, 60.0).c_str());
+	V4L2Capture::StatsSnapshot one; one.dequeued = 60; one.accepted = 60; one.decoded = 60; one.durationSamples = 60;
+	std::printf("capture-1fps|%s\n", V4L2Capture::Stats::format(one, 60.0).c_str());
+
 	LedOutput::Snapshot d;
 	d.presented = 3600; d.updates = 3600; d.packets = 10800; d.maxPacketsPerUpdate = 3; d.bytes = 15606000; d.packetsCounted = true;
 	std::printf("led|%s\n", LedOutput::Stats::format(d, 60.0).c_str());

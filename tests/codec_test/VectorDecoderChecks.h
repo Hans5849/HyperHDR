@@ -232,10 +232,8 @@ inline std::string runRow(VectorRef::Fmt f, int width, bool quarter, bool tone, 
 }
 
 // Cases a separate, confirmed defect still breaks; printed, never silent.
-inline const char* knownDefect(const VectorRef::Case& c)
+inline const char* knownDefect(const VectorRef::Case&)
 {
-	if (c.fmt == VectorRef::Fmt::P010 && !c.opts.quarter && (c.opts.cropLeft >> 1) > 0)
-		return "P010 left crop is applied in bytes, not pixels (#63)";
 	return nullptr;
 }
 }

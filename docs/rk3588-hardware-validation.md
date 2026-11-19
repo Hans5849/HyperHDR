@@ -11,7 +11,7 @@ connected HDMI source.
 | --- | --- | --- |
 | Native build on Debian 13 ARM64 | Confirmed | Operator build of `cca3898`: GCC 14.2.0, CMake 3.31.6, Qt 6.8.2, Ninja, `ENABLE_V4L2=ON` |
 | Local `.deb` install through APT | Confirmed | All dependencies resolved; `hyperhdr@ryan.service` enabled and active |
-| Hardware-free regression tests on the board | Confirmed | V4L2 capture test and BGR24 decoder test passed (2026-11-09). The `RK3588 board checks` workflow also passed every sanitizer suite natively on 2026-11-15, but its benchmark step failed on the executable path, which is now fixed; it needs a rerun ([run](https://github.com/Hans5849/HyperHDR/actions/runs/43716032809)) |
+| Hardware-free regression tests on the board | Confirmed earlier | V4L2 capture test and BGR24 decoder test passed (2026-11-09). The `RK3588 board checks` workflow passed every sanitizer suite natively on 2026-11-15, but its benchmark step failed on the executable path ([run](https://github.com/Hans5849/HyperHDR/actions/runs/43716032809)). That is fixed on master; an operator-approved `stage: tests` run on the release candidate is still needed (#28) |
 | Kernel-level capture (`v4l2-ctl`, outside HyperHDR) | Confirmed earlier | Armbian 26.8.3: HDMI output-to-input loopback, 120 BGR3 1080p frames, ~16.67 ms intervals, no gaps or buffer errors ([mainline review](rk3588-mainline-review.md)) |
 | Receiver discovery in HyperHDR | Confirmed | `snps_hdmirx` found at `/dev/video1` (seen earlier as `/dev/video2` and `/dev/video5`); Rockchip non-capture nodes rejected; receiver initialized |
 | No-source behaviour at `cca3898` | Confirmed | Streaming started, no frames, five-second timeout, delayed retries |
@@ -100,15 +100,20 @@ sudo apt-get install build-essential cmake ninja-build git pkg-config python3 \
   libturbojpeg0-dev libusb-1.0-0-dev libzstd-dev patchelf chrpath unzip wget \
   qt6-base-dev qt6-serialport-dev v4l-utils
 
-git clone --recursive --branch claude/great-heisenberg-bgp44k https://github.com/Hans5849/HyperHDR.git
+git clone --recursive https://github.com/Hans5849/HyperHDR.git
 cd HyperHDR
+git checkout "$(git rev-parse origin/master)"   # pin the current master commit
+git submodule update --init --recursive
 cmake -S . -B build -G Ninja -DPLATFORM=linux -DENABLE_V4L2=ON \
   -DCMAKE_BUILD_TYPE=Release -DUSE_SYSTEM_FLATBUFFERS_LIBS=ON
 cmake --build build
 (cd build && cpack -G DEB)
 ```
 
-For an existing checkout use `git fetch origin && git checkout claude/great-heisenberg-bgp44k && git pull && git submodule update --init --recursive`.
+Build `master`, pinned to the commit being validated, so every result names one
+commit. For an existing checkout: `git fetch origin && git checkout "$(git rev-parse origin/master)" &&
+git submodule update --init --recursive`. (Earlier versions of this guide built a
+development branch that has since been merged.)
 
 The default (non-CI) package name is `HyperHDR-<application version>-Linux-aarch64.deb`,
 for example `HyperHDR-24.0.0-beta.0-Linux-aarch64.deb`. Its control `Version` is
@@ -140,6 +145,34 @@ without starting the daemon. Stop the service first, because the script refuses
 to run while another `hyperhdr` process exists. `--daemon` additionally starts
 the daemon briefly with `--debug` and `--verbose` and a throw-away `--userdata`
 directory.
+
+## Back up before installing
+
+Do this before every install, so the [rollback](#roll-back) has something to
+restore. It stops the service briefly (the settings database must not change
+while it is copied).
+
+```sh
+svc_user=$(id -un)
+svc_home=$(getent passwd "$svc_user" | cut -d: -f6)
+backup=~/hyperhdr-backup-$(date +%Y%m%d-%H%M%S); mkdir -p "$backup"
+# What is installed now
+dpkg-query -W -f='${Package} ${Version} ${Architecture}\n' hyperhdr | tee "$backup/installed.txt"
+hyperhdr --version | tee -a "$backup/installed.txt"
+sha256sum "$(command -v hyperhdr)" | tee -a "$backup/installed.txt"
+uname -r | tee -a "$backup/installed.txt"
+# The package to roll back to: the .deb you installed last time. If you no
+# longer have it, download the release with exactly the version printed above
+# before continuing.
+cp /path/to/the-currently-installed.deb "$backup/"
+# Settings and database, with ownership
+sudo systemctl stop "hyperhdr@$svc_user"
+sudo tar -C "$svc_home" -czpf "$backup/hyperhdr-userdata.tgz" .hyperhdr
+sudo tar -tzf "$backup/hyperhdr-userdata.tgz" | head      # readable, not empty
+sudo systemctl start "hyperhdr@$svc_user"
+```
+
+Keep `$backup` until the new build has passed the acceptance run.
 
 ## Install and run the service
 
@@ -224,7 +257,8 @@ cancels both pending retries and the signal wait.
 None of the following has been run. Do not mark any item as passed without
 captured evidence (logs, screenshots, measurements).
 
-The [operator checklist](rk3588-operator-checklist.md) turns these into a run
+The [acceptance run](rk3588-acceptance-run.md) is the ordered procedure for a
+release candidate. The [operator checklist](rk3588-operator-checklist.md) turns these into a run
 sheet: each step is classed as safe while HyperHDR runs, needing exclusive
 receiver access, or user-visible, with commands, expected log lines and pass
 criteria.
@@ -242,6 +276,11 @@ criteria.
    `RGB range evidence: format quantization ..., receiver RGB range control ...`
    for each source and any `RGB range mismatch:` warning (#10). Decoding follows
    the format quantization only; a mismatch is evidence, not an automatic fix.
+   Only `V4L2_QUANTIZATION_LIM_RANGE` expands 16–235 to 0–255
+   (`BGR24_LIMITED`); `DEFAULT` and `FULL_RANGE` are decoded as full range. A
+   receiver that reports `DEFAULT` while the source sends limited-range RGB
+   therefore gives a washed-out picture (black at 16); the `RGB range mismatch`
+   warning says so when the receiver's range control disagrees.
 6. Reconnection and signal loss: unplug and replug, power the source off and on,
    change the timing and back, ten times each, plus a start with the source
    absent. Expect `no signal` followed by `Input signal ... starting capture`,
@@ -249,9 +288,14 @@ criteria.
 7. CPU and memory: idle CPU while waiting for a signal, plus stable RSS, open fd
    count and mapping counts (`/proc/PID/fd`, `/proc/PID/maps`) before and after
    the recovery loops.
-8. WLED output and colour: DDP to the controller on UDP 4048, solid colours first,
-   then video. Check every border LED, channel order and brightness. A correct
-   preview alone does not validate DDP.
+8. WLED output and colour: DDP to the controller on UDP 4048 (or WLED realtime
+   UDP 21324 with the `wled` driver), solid colours first, then video. Check every
+   border LED, channel order and brightness. A correct preview alone does not
+   validate DDP.
+9. Supported source modes beyond 1080p60: each 4K mode the receiver reports
+   (`--query-dv-timings`), with the preview and LEDs checked as above.
+10. Separate capture and LED rates over the same minutes (`stats-align.py`), and
+    CPU, RSS and SoC temperatures during the 30-minute run.
 
 Repeat 6 with a USB grabber to confirm the single-planar path is unchanged.
 
@@ -326,11 +370,24 @@ Provisioning, trust boundaries, the disruption policy and runner removal are in
 
 ## Roll back
 
-Stop the service. Install the saved official arm64 package with
-`sudo apt install --allow-downgrades ./EXACT-STABLE.deb`, restore the settings
-backup (`~/.hyperhdr` of the service user, including its database) with its
-original ownership, and start the service again. This branch requires no reboot
-and no kernel change.
+Uses the backup made [before installing](#back-up-before-installing). No reboot
+or kernel change is needed.
+
+```sh
+sudo systemctl stop "hyperhdr@$svc_user"
+sudo apt install --allow-downgrades "$backup"/*.deb
+sudo mv "$svc_home/.hyperhdr" "$svc_home/.hyperhdr.rejected-$(date +%Y%m%d-%H%M%S)"
+sudo tar -C "$svc_home" -xzpf "$backup/hyperhdr-userdata.tgz"
+sudo systemctl start "hyperhdr@$svc_user"
+dpkg-query -W hyperhdr; hyperhdr --version      # compare with $backup/installed.txt
+systemctl status "hyperhdr@$svc_user"
+```
+
+**Confirm the rollback works before you need it:** the first time, after making
+the backup, check that `installed.txt` names the version you expect, that the
+saved `.deb` reports the same version (`dpkg-deb -f "$backup"/*.deb Version`),
+and that the archive lists `.hyperhdr/` and its database. Restoring for real is
+only needed if the new build fails.
 
 ## Optional: Docker package build
 

@@ -23,9 +23,11 @@ time is that end (1 s resolution with -o short-iso, 1 us with short-iso-precise)
                      dequeued = accepted + discarded (the line's own identity),
                      length = dequeued / (fps dequeued). The rate is rounded to
                      0.1 fps, so the start is uncertain by dequeued/(fps +- 0.05);
-                     the uncertainty is printed. With no dequeued frames, or an
-                     ACCOUNTING MISMATCH, the length is unknown and the interval
-                     is not paired.
+                     the uncertainty is printed. With no dequeued frames, a rate
+                     that rounds to 0.0, or an ACCOUNTING MISMATCH, the length is
+                     unknown; at low rates it may be too uncertain to pair (its
+                     half-range exceeds 1 - --min-overlap of the length). Either
+                     way the interval is reported and not paired.
 Two intervals are paired when their overlap covers at least --min-overlap of
 each (default 0.9).
 
@@ -120,7 +122,12 @@ def parse(lines):
                        mismatch="ACCOUNTING MISMATCH" in body)
             dequeued = rec["accepted"] + rec["discarded"]
             rec["dequeued"] = dequeued
-            if rec["mismatch"] or not dequeued or not rec["fps"]:
+            # Why the length can't be recovered, if it can't.
+            rec["unknown_length"] = ("its counts don't add up (ACCOUNTING MISMATCH)" if rec["mismatch"]
+                                     else "no frames were dequeued" if not dequeued
+                                     else "%d frames at a rate that rounds to 0.0 fps" % dequeued if not rec["fps"]
+                                     else None)
+            if rec["unknown_length"]:
                 rec["seconds"] = rec["seconds_lo"] = rec["seconds_hi"] = None
             else:
                 rec["seconds"] = dequeued / rec["fps"]
@@ -161,10 +168,25 @@ def overlap(a, b):
     return min(o / a["seconds"], o / b["seconds"]) if a["seconds"] and b["seconds"] else 0.0
 
 
+def too_uncertain(c, min_overlap):
+    """A capture length known only to within more than the overlap tolerance.
+
+    The rate is printed to 0.1 fps, so at low rates the recovered length is
+    uncertain (e.g. 6 frames at 0.1 fps: 40..120 s). Pairing such an interval
+    would claim an overlap that the data can't support."""
+    if c["seconds"] is None:
+        return False
+    if c["seconds_hi"] is None:
+        return True
+    return (c["seconds_hi"] - c["seconds_lo"]) / 2 > (1 - min_overlap) * c["seconds"]
+
+
 def align(capture, led, min_overlap):
     pairs = []
     for device, recs in sorted(led.items()):
         for c in capture:
+            if too_uncertain(c, min_overlap):
+                continue
             best, best_o = None, 0.0
             for l in recs:
                 o = overlap(c, l)
@@ -202,8 +224,12 @@ def report(capture, led, notes, pairs, min_overlap):
     for c in capture:
         if c["mismatch"]:
             out.append("WARN capture interval ending %s has ACCOUNTING MISMATCH: its length can't be recovered; not paired" % fmt_time(c["end"]))
-        elif c["seconds"] is None:
-            out.append("NOTE capture interval ending %s has no dequeued frames: length unknown, not paired" % fmt_time(c["end"]))
+        elif c["unknown_length"]:
+            out.append("NOTE capture interval ending %s: %s, so its length is unknown; not paired" % (fmt_time(c["end"]), c["unknown_length"]))
+        elif too_uncertain(c, min_overlap):
+            hi = "%.1f" % c["seconds_hi"] if c["seconds_hi"] else "unbounded"
+            out.append("NOTE capture interval ending %s: %d frames at %.1f fps, so its length is %.1f..%s s (the rate is rounded to 0.1 fps); "
+                       "too uncertain to pair at %d%% overlap" % (fmt_time(c["end"]), c["dequeued"], c["fps"], c["seconds_lo"], hi, round(min_overlap * 100)))
     for n in notes:
         out.append("NOTE " + n)
     out.append("")

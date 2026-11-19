@@ -174,6 +174,26 @@ r, js = analyze(on, "--onsets")
 check(js and js["paired"] == 1 and abs(js["all"]["p50"] - 50) < 1e-6 and len(js["led_without_reference"]) == 1,
       "a falling LED edge isn't taken as the response to a rise", js and js["pairs"])
 
+# Dropouts: a USB recorder that loses 30 ms of samples across three LED
+# edges. Interpolating a crossing across the hole could be off by up to 15 ms;
+# those pairs are listed and left out, the rest stay exact.
+path, times = synth("gaps", [42.0] * 30, seed=23)
+holes = [(times[i] + 0.042 - 0.010, times[i] + 0.042 + 0.020) for i in (4, 11, 20)]
+rows = list(csv.reader(open(path)))
+with open(path, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(rows[0])
+    w.writerows(r for r in rows[1:] if not any(h0 <= float(r[0]) <= h1 for h0, h1 in holes))
+r, js = analyze(path)
+check(js and js["meta"]["gaps"] == 3 and 29 <= js["meta"]["largest_gap_ms"] <= 31 and len(js["timed_across_gap"]) == 3,
+      "three 30 ms recording gaps found; the three pairs timed across them are excluded", js and (js["meta"]["gaps"], js["meta"]["largest_gap_ms"], len(js["timed_across_gap"])))
+check(js and js["paired"] == 27 and abs(js["all"]["min"] - 42) <= tol and abs(js["all"]["max"] - 42) <= tol and abs(js["meta"]["sample_interval_ms"] - 0.2) < 1e-6,
+      "the other 27 stay within %.1f ms; the median sample interval ignores the gaps" % tol, js and (js["paired"], js["all"]["min"], js["all"]["max"]))
+check("3 gap(s) in the recording longer than 5 sample intervals" in run("analyze", path).stdout, "text report warns about the gaps")
+r, js = analyze(synth("nogaps", [42.0] * 10, seed=29)[0])
+check(js and js["meta"]["gaps"] == 0 and not js["timed_across_gap"] and "gap" not in run("analyze", synth("nogaps2", [42.0] * 10, seed=29)[0]).stdout,
+      "an even recording reports no gaps")
+
 # 10. Bad input.
 bad = tmp / "flat.csv"
 bad.write_text("".join("%d,0.5,0.5\n" % i for i in range(100)))
