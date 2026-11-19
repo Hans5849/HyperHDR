@@ -137,6 +137,9 @@ jobs:
       - name: Installation and diagnostics checks (stubbed systems, read-only)
         run: bash tests/diagnostics/doctor-test.sh
 
+      - name: Header hygiene (no precompiled header, double include)
+        run: bash tests/ci/header-hygiene-test.sh
+
       - name: Board runner preflight and workflow trust policy
         run: |
           bash tests/rk3588/board-preflight-test.sh
