@@ -143,6 +143,9 @@ jobs:
           python3 tests/ci/board-workflow-policy-test.py
           python3 tests/ci/cache-cleaner-policy-test.py
 
+      - name: Agent operating standard (AGENTS.md/CLAUDE.md consistency, test registry)
+        run: python3 tests/ci/agent-entrypoints-test.py
+
 ######################
 ###### Linux #########
 ######################

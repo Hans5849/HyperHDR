@@ -36,3 +36,6 @@ tests/codec_test/build/
 CMakeSettings.json
 cmake-build-debug
 .idea
+
+# Tactical agent handoffs (durable records belong in GitHub)
+.agent-handoff/
