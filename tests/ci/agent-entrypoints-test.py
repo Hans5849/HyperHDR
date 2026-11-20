@@ -42,8 +42,9 @@ check("(AGENTS.md)" in texts["CLAUDE.md"], "CLAUDE.md links AGENTS.md")
 for name, text in texts.items():
     for rel in shared:
         check(f"({rel})" in text, f"{name} references {rel}")
-    pm = re.findall(r"issue #(\d+)", text)
+    pm = re.findall(r"PM Control \(canonical dashboard\): issue #(\d+)", text)
     check(len(set(pm)) == 1, f"{name} names exactly one PM Control issue")
+    check("Sprint coordination" in text, f"{name} records the sprint coordination issue")
 
 revs = {n: revision(p) for n, p in entry.items()}
 for rel in ("docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN.md",
@@ -52,7 +53,7 @@ for rel in ("docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN
 revs["docs/test-registry.json"] = json.loads((ROOT / "docs/test-registry.json").read_text())["policy_revision"]
 check(None not in revs.values(), "every policy file states a revision")
 check(len(set(revs.values())) == 1, "one policy revision everywhere: %s" % sorted(set(map(str, revs.values()))))
-pms = {re.findall(r"issue #(\d+)", t)[0] for t in texts.values() if re.findall(r"issue #(\d+)", t)}
+pms = {m for t in texts.values() for m in re.findall(r"PM Control \(canonical dashboard\): issue #(\d+)", t)}
 check(len(pms) == 1, "both entrypoints name the same PM Control issue")
 
 plan = (ROOT / "docs/TEST_PLAN.md").read_text(encoding="utf-8")

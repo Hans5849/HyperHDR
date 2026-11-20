@@ -1,6 +1,6 @@
 # Agent workflow: 16-hour cycle, execution and reporting
 
-Policy revision: `AP-2026.11.20-1` · Authority rules: [AGENT_POLICY.md](AGENT_POLICY.md) · PM Control: issue #74.
+Policy revision: `AP-2026.11.20-2` · Authority rules: [AGENT_POLICY.md](AGENT_POLICY.md) · PM Control: issue #74 · Sprint coordination: issue #75.
 
 The primary measure is **accepted deliverables** with traceable evidence, within the owner's review capacity. Merged PRs, commits and closed issues are activity, not progress.
 
@@ -16,28 +16,36 @@ This project is low priority. The standard's four-hour rhythm is replaced by a *
 
 Planning: outcomes are planned per two-week increment.
 
-## 2. Roles on Claude
+## 2. Roles and persistent sessions
 
-Separate Claude Code cloud sessions fill the roles: a **coordinator** task and, 45 minutes later, a **developer** task. Each firing starts a fresh session, which must clone the repository and rebuild state from GitHub before any write. Reviewers are separate sessions named in the work order.
+| Role | Assignment |
+|---|---|
+| A Coordinator | Reconciles prior work, PM notices and decisions; maintains the #74 body; issues bounded work orders. |
+| B Developer | Claims authorized work; implements and repairs CI; tests and reports. Starts 45 minutes after A. |
+| D Reviewer | Reviews PRs it did not author; records findings and exact-candidate evidence on the PR. Never reviews its own work. |
+| C Integration, E Go/no-go | **Omitted** for Sprint 1 (no approved integration candidate or release candidate). Adding either needs an explicit schedule, scope and an inventory entry (§12). |
+
+Each scheduled role has **one persistent Claude Code session**, created with `create_session` (source `https://github.com/Hans5849/HyperHDR`, title `Sprint 1: HyperHDR <role> (scheduled)`, tag `hyperhdr-sprint-20261120`). Its scheduled task resumes that session through `persistent_session_id`. **Fresh-session triggers are never used.** Every run re-verifies checkout, GitHub access and durable context (GitHub records, not session memory) before any write. If the platform cannot meet this contract, the role reports setup BLOCKED on #74 instead of substituting a fresh session.
 
 ## 3. Schedule
 
-Cron cannot express a 16-hour interval directly, so the cycle repeats every 48 hours on day-of-month parity, in **UTC** (no daylight-saving drift).
+Cron cannot express a 16-hour interval directly, so the cycle repeats every 48 hours on day-of-month parity. Every cron is prefixed `CRON_TZ=America/New_York`.
 
-| Role | Odd days of month (UTC) | Even days of month (UTC) | Cron |
+| Role | Odd days (New York) | Even days (New York) | Crons |
 |---|---|---|---|
-| Coordinator | 02:10, 18:10 | 10:10 | `10 2,18 1-31/2 * *` and `10 10 2-30/2 * *` |
-| Developer | 02:55, 18:55 | 10:55 | `55 2,18 1-31/2 * *` and `55 10 2-30/2 * *` |
+| A Coordinator | 00:10, 16:10 | 08:10 | `10 0,16 1-31/2 * *` · `10 8 2-30/2 * *` |
+| B Developer | 00:55, 16:55 | 08:55 | `55 0,16 1-31/2 * *` · `55 8 2-30/2 * *` |
+| D Reviewer | 01:15, 17:15 | 09:15 | `15 1,17 1-31/2 * *` · `15 9 2-30/2 * *` |
 
-Gaps are exactly 16 hours except once after the 31st of a month and after 29 February, when the gap is 8 hours. Run IDs de-duplicate, so the short gap is harmless. Reports show times in UTC and America/New_York.
+Gaps are 16 hours, except one 8-hour gap after the 31st of a month (and after 29 February). Sprint 1 runs entirely in EST (UTC−05:00); no daylight-saving change falls inside it. A schedule is not a dependency: work-order freshness, claims, gates and resource limits are enforced regardless of timing.
 
-Rules: record scheduled and actual times in UTC. De-duplicate repeated triggers by run ID (`coord-YYYYMMDDTHHMMZ`, `dev-YYYYMMDDTHHMMZ`, from the scheduled UTC time). A delayed or missed run never implies a completed handoff or permission to start. Mark the dashboard **STALE** when a scheduled coordinator report is missing.
+Rules: record scheduled and actual times in UTC and America/New_York. De-duplicate repeated triggers by run ID (`coord-`, `dev-`, `rev-` plus the scheduled UTC time as `YYYYMMDDTHHMMZ`). A delayed or missed run never implies a completed handoff or permission to start. Mark the dashboard **STALE** when a scheduled coordinator report is missing.
 
-Stop procedure: disable the scheduled tasks in Claude Code (claude.ai → Code → Scheduled tasks). Changing the schedule is an owner action.
+Stop procedure: the one-time shutdown task (§12). Changing schedules, the deadline or the inventory is an owner action; untracked schedules are prohibited.
 
 ## 4. Work-order contract
 
-The coordinator posts each work order as a comment on #74. An order is READY only when every field is verified:
+The coordinator posts each work order as a comment on the coordination issue (#75) and links it from the #74 work-order slot. An order is READY only when every field is verified:
 
 run ID · repository · release and approved issue · objective, scope and non-goals · target branch, base SHA (full) and policy revision · dependencies and file set · allowed and prohibited actions · `OWNER APPROVAL:` link covering the scope · required tests (registry IDs) and acceptance · named independent reviewer · fallback tasks · execution, CI-watch and retry budgets · created time, claim deadline (after developer start, within 60 minutes) and execution deadline (before the next coordinator slot) · lease mechanism · report destinations.
 
@@ -49,9 +57,9 @@ The developer rereads live state and authorization before claiming. A missing, e
 
 Order states: DRAFT → READY → CLAIMED → RUNNING → REPORTED → RECONCILED, with BLOCKED, FAILED, EXPIRED and CANCELLED outcomes.
 
-A durable lease records holder, workstream, heartbeat, expiry and a fencing token. GitHub `CLAIM` and `RELEASE` comments on #74 are the visible audit trail; **labels and comments alone are not an atomic lock**, so until an exclusive lease mechanism is named and validated (§11), the activation gate stays closed. One writer per conflicting workstream; never share a writable worktree. Lease expiry does not prove the old worker stopped: revoke or fence before reassigning. Retries are idempotent.
+A durable lease records holder, workstream, heartbeat, expiry and a fencing token. GitHub `CLAIM` and `RELEASE` comments on the coordination issue (#75) are the visible audit trail; **labels and comments alone are not an atomic lock**, so until an exclusive lease mechanism is named and validated (§11), the activation gate stays closed. One writer per conflicting workstream; never share a writable worktree. Lease expiry does not prove the old worker stopped: revoke or fence before reassigning. Retries are idempotent.
 
-Budgets: finite execution, CI-watch and retry budgets; checkpoint before the next coordinator slot. On CI or hardware delay, keep pending status and take only approved independent fallback work. On authentication failure, stale state, repeated test failure or exhausted budget, report and stop.
+Budgets: finite execution, CI-watch and retry budgets; checkpoint before the next coordinator slot. Every role checks the sprint cutoff and shutdown state (§12) before any write. On CI or hardware delay, keep pending status and take only approved independent fallback work. On authentication failure, stale state, repeated test failure or exhausted budget, report and stop.
 
 ## 6. Execution loop (developer)
 
@@ -118,3 +126,16 @@ Completion = 100 × accepted weight / approved weight, aggregated over weights (
 - [ ] Missed coordinator run → dashboard marked STALE.
 - [ ] Denied write / auth failure → stop with actionable report.
 - [ ] Two consecutive clean read-only 16-hour cycles with accurate dashboard and links.
+
+## 12. Sprint 1: deadline, shutdown and setup receipt
+
+- Sprint `hyperhdr-sprint-20261120`. Deadline **2026-12-12 23:59 America/New_York** (UTC−05:00). Cutoff and shutdown: **2026-12-12 23:14 America/New_York = 2026-12-13T04:14:00Z**.
+- From the cutoff onward: no new work orders, claims or branch writes. A one-time shutdown task, bound to a persistent control session, does the following:
+  1. Sets sprint state STOPPING.
+  2. Disables every task in the inventory with `update_trigger enabled=false` and verifies each by readback. This includes any optional or later-added task.
+  3. Asks active holders to checkpoint and RELEASE.
+  4. Posts the final handoff on #74, linked from #75.
+  Disabling a trigger does not stop a running session. A disable failure, or an active worker that cannot stop, is an owner-action blocker and is never reported as full shutdown.
+- The task inventory (role, session ID, trigger IDs, schedules) lives in the **setup receipt** comment on #74. That comment is the durable inventory the shutdown task reads. Any task added later must be added to the receipt before it is enabled.
+- Roles stay inactive until the setup receipt says `Overall result: Ready`. Before that, each run only verifies access and exits.
+- Resuming after the deadline requires recorded owner direction.

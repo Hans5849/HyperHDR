@@ -1,6 +1,6 @@
 # Project plan
 
-Policy revision: `AP-2026.11.20-1` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
+Policy revision: `AP-2026.11.20-2` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
 
 ## Charter
 

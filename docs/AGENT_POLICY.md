@@ -1,9 +1,9 @@
 # Agent policy: authority and approval boundaries
 
-Policy revision: `AP-2026.11.20-1` · Adopted from: *AI assisted development operating standard* (20 November 2026), with the owner's amendment of 2026-11-20 setting a **16-hour** coordination cycle because this project is low priority.
+Policy revision: `AP-2026.11.20-2` · Adopted from: *AI assisted development operating standard* (20 November 2026), with the owner's amendment of 2026-11-20 setting a **16-hour** coordination cycle because this project is low priority.
 Entrypoints: [AGENTS.md](../AGENTS.md), [CLAUDE.md](../CLAUDE.md). Workflow: [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md). PM Control: issue #74.
 
-Unattended implementation: **NOT ACTIVE** (see §6, activation gate).
+Unattended implementation: **NOT ACTIVE** (see §6, activation gate). Sprint 1 ends 2026-12-12 23:59 America/New_York; cutoff 23:14 (AGENT_WORKFLOW.md §12).
 
 ## 1. Roles
 

@@ -1,6 +1,6 @@
 # Resource limits
 
-Policy revision: `AP-2026.11.20-1` · Checked: 2026-11-20 (setup) · Owner: Hans5849
+Policy revision: `AP-2026.11.20-2` · Checked: 2026-11-20 (setup) · Owner: Hans5849
 
 Agents re-check these each coordinator run where they can, and mark anything they cannot verify **Unknown**. Spending, purchases or limit changes are PM review items; agents never buy capacity or skip required tests for lack of it.
 

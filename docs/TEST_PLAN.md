@@ -1,6 +1,6 @@
 # Test plan
 
-Policy revision: `AP-2026.11.20-1` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
+Policy revision: `AP-2026.11.20-2` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
 
 ## Gates
 
