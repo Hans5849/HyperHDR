@@ -27,7 +27,8 @@ def revision(path):
 
 entry = {name: ROOT / name for name in ("AGENTS.md", "CLAUDE.md")}
 shared = ["docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN.md",
-          "docs/TEST_PLAN.md", "docs/test-registry.json", "docs/RESOURCE_LIMITS.md"]
+          "docs/TEST_PLAN.md", "docs/test-registry.json", "docs/RESOURCE_LIMITS.md",
+          "docs/INSTALLATION_PROFILE.md", "docs/SECURITY_PLAN.md"]
 
 for name, path in entry.items():
     check(path.is_file(), f"{name} exists")
@@ -48,7 +49,8 @@ for name, text in texts.items():
 
 revs = {n: revision(p) for n, p in entry.items()}
 for rel in ("docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN.md",
-            "docs/TEST_PLAN.md", "docs/RESOURCE_LIMITS.md"):
+            "docs/TEST_PLAN.md", "docs/RESOURCE_LIMITS.md",
+            "docs/INSTALLATION_PROFILE.md", "docs/SECURITY_PLAN.md"):
     revs[rel] = revision(ROOT / rel)
 revs["docs/test-registry.json"] = json.loads((ROOT / "docs/test-registry.json").read_text())["policy_revision"]
 check(None not in revs.values(), "every policy file states a revision")
@@ -61,5 +63,9 @@ ids = [t["id"] for t in json.loads((ROOT / "docs/test-registry.json").read_text(
 check(len(ids) == len(set(ids)), "test-registry IDs are unique")
 missing = [i for i in ids if i not in plan]
 check(not missing, "every registry ID appears in TEST_PLAN.md %s" % (missing or ""))
+sec = (ROOT / "docs/SECURITY_PLAN.md").read_text(encoding="utf-8")
+sids = sorted({s for t in json.loads((ROOT / "docs/test-registry.json").read_text())["tests"] for s in t.get("security_ids", [])})
+check(bool(sids), "test registry links security test IDs")
+check(all(s in sec for s in sids), "every registry security ID is defined in SECURITY_PLAN.md")
 
 sys.exit(1 if failures else 0)

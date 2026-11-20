@@ -1,6 +1,6 @@
 {
   "schema": "hyperhdr.test-registry/1",
-  "policy_revision": "AP-2026.11.20-2",
+  "policy_revision": "AP-2026.11.20-3",
   "tests": [
     {
       "id": "T-V4L2",
@@ -12,7 +12,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-BGR24",
@@ -24,7 +27,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-COLOR-REF",
@@ -36,7 +42,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-DECODER",
@@ -48,7 +57,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-BENCH-REPORT",
@@ -72,7 +84,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-CLI",
@@ -84,7 +99,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-MEM-01"
+      ]
     },
     {
       "id": "T-COLOR-PATTERNS",
@@ -120,7 +138,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-PKG-01"
+      ]
     },
     {
       "id": "T-BOARD-ARTIFACT",
@@ -156,7 +177,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-RED-01"
+      ]
     },
     {
       "id": "T-DOCTOR",
@@ -168,7 +192,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-RED-01"
+      ]
     },
     {
       "id": "T-BOARD-POLICY",
@@ -180,7 +207,10 @@
       "expected": "exit 0; ctest/PASS lines only",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "low (hosted runner minutes)"
+      "cost": "low (hosted runner minutes)",
+      "security_ids": [
+        "S-CI-01"
+      ]
     },
     {
       "id": "T-AGENT-ENTRYPOINTS",
@@ -204,7 +234,10 @@
       "expected": "package builds, metadata check and smoke pass",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "high (full matrix)"
+      "cost": "high (full matrix)",
+      "security_ids": [
+        "S-PKG-01"
+      ]
     },
     {
       "id": "T-PKG-MACOS",
