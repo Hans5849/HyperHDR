@@ -1,6 +1,6 @@
 {
   "schema": "hyperhdr.test-registry/1",
-  "policy_revision": "AP-2026.11.20-3",
+  "policy_revision": "AP-2026.11.20-4",
   "tests": [
     {
       "id": "T-V4L2",

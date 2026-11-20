@@ -1,6 +1,6 @@
 # Agent workflow: 16-hour cycle, execution and reporting
 
-Policy revision: `AP-2026.11.20-3` · Authority rules: [AGENT_POLICY.md](AGENT_POLICY.md) · PM Control: issue #74 · Sprint coordination: issue #75.
+Policy revision: `AP-2026.11.20-4` · Authority rules: [AGENT_POLICY.md](AGENT_POLICY.md) · PM Control: issue #74 · Sprint coordination: issue #75.
 
 The primary measure is **accepted deliverables** with traceable evidence, within the owner's review capacity. Merged PRs, commits and closed issues are activity, not progress.
 
@@ -24,6 +24,7 @@ Planning: outcomes are planned per two-week increment.
 | B Developer | Claims authorized work; implements and repairs CI; tests and reports. Starts 45 minutes after A. |
 | D Reviewer | Reviews PRs it did not author; records findings and exact-candidate evidence on the PR. Never reviews its own work. Read-only; uses no writer slot. |
 | F Security reviewer | Reviews code, dependencies and delivery controls against [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md); posts the security gate record per [SECURITY_PLAN.md](SECURITY_PLAN.md). Read and comment only; writes no remediation; uses no writer slot. |
+| (profile) | Repository security profile: **Public fork** (INSTALLATION_PROFILE.md). Pages 15–17 of the standard apply in full, with per-PR F review; security drills run in full. Agents act only on owner-approved issues and PRs (AGENT_POLICY.md §7). |
 | C Integration, E Go/no-go | **Omitted** for Sprint 1 (no approved integration candidate or release candidate). Omitting a role never omits its checks: without C, B builds any integration preview under a work order and D and F verify it; without E, A compiles the go/no-go package for the owner. Adding either needs an explicit schedule, scope and an inventory entry (§12). |
 
 A, B, D and F are required roles. B, D and F are always separate sessions. Each scheduled role has **one persistent Claude Code session**, created with `create_session` (source `https://github.com/Hans5849/HyperHDR`, title `Sprint 1: HyperHDR <role> (scheduled)`, tag `hyperhdr-sprint-20261120`). Its scheduled task resumes that session through `persistent_session_id`. **Fresh-session triggers are never used.** Every run re-verifies checkout, GitHub access and durable context (GitHub records, not session memory) before any write. If the platform cannot meet this contract, the role reports setup BLOCKED on #74 instead of substituting a fresh session.

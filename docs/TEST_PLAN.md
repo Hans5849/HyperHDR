@@ -1,6 +1,6 @@
 # Test plan
 
-Policy revision: `AP-2026.11.20-3` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Security-relevant tests carry `security_ids` that map to [SECURITY_PLAN.md](SECURITY_PLAN.md) §3. Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
+Policy revision: `AP-2026.11.20-4` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Security-relevant tests carry `security_ids` that map to [SECURITY_PLAN.md](SECURITY_PLAN.md) §3. Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
 
 ## Gates
 

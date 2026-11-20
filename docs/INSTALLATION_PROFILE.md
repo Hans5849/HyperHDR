@@ -1,6 +1,27 @@
 # Installation profile
 
-Policy revision: `AP-2026.11.20-3` · Profile revision: `IP-1` · Accountable owner: Hans5849 · Last verified: 2026-11-20 (from repository docs and code only; **not** re-observed on the target)
+Policy revision: `AP-2026.11.20-4` · Profile revision: `IP-2` · Accountable owner: Hans5849 · Last verified: 2026-11-20 (from repository docs and code only; **not** re-observed on the target)
+
+## Repository security profile (standard page 18)
+
+**Profile: Public fork.** Owner-stated on 2026-11-20. This repository is a public fork of upstream `awawa-dev/HyperHDR`. Changing the visibility or the profile is a protected change that needs owner approval.
+
+How pages 15–17 apply here:
+- **Full rules, per-PR F review.** Pages 15–17 apply in full, and every PR gets F review. F also reviews every release candidate in full before installation or release.
+- **Restricted channel.** Use GitHub private vulnerability reporting on this fork. Flaws in upstream code follow the upstream project's policy: report them privately to the upstream maintainers. The owner relays them; agents never post upstream.
+- **Outside PRs.** These are PRs whose head is in another repository or whose author is not the owner. They never run on self-hosted runners or with secrets, and no `pull_request_target` workflow checks out PR code. Agents act only on issues and PRs the owner has approved (AGENT_POLICY.md §7).
+- **Upstream merges.** Syncs from `awawa-dev/HyperHDR` are reviewed by D and F like dependency updates.
+- **Possible second profile.** If this fork publishes release artifacts for other people to install, the "self-hosted software others install" rules become release criteria as well. That would mean secure defaults, published checksums or signatures, and advisories with fixes. This is open owner question 6.
+
+**Workflow check (2026-11-20, from `.github/workflows/`)**
+
+| Requirement | Result |
+|---|---|
+| No `pull_request_target` workflows | Pass |
+| `rk3588-board.yml` is `workflow_dispatch` only, on the self-hosted runner | Pass |
+| SignPath secrets are skipped for `pull_request` | Pass |
+| `publish-daily-development-build.yml` runs only in `awawa-dev/HyperHDR` | Pass |
+| Inherited upstream publishing on this fork | `upload-to-github-pages.yml` runs on any tag push here and tries to deploy to upstream's Pages repository, using a secret this fork doesn't have. Recorded as SF-006 |
 
 The profile lists **intended** and **observed** facts separately, and the security reviewer (F) maps every finding to a profile below. Anything not yet confirmed is marked **Unknown** and is raised as a PM question. Environment-dependent security approval stays blocked until it is resolved. Credentials, hostnames, IP addresses, MAC addresses and usernames are deliberately left out; record them only in restricted owner notes.
 
@@ -56,3 +77,5 @@ Sources: `docs/rk3588-development-results.md`, `docs/rk3588-hardware-validation.
 3. On P1: the configured values of `localApiAuth`, `localAdminAuth` and `ipWhitelist`.
 4. How `.deb` integrity is verified on install (checksum or signature).
 5. Whether the `rk3588-hil` environment has required reviewers configured.
+6. Whether this fork publishes release artifacts (GitHub Releases or packages) for other people to install. If it does, the "self-hosted software others install" rules apply too, and SF-001's default (`localApiAuth=false`) becomes a release blocker.
+7. Whether private vulnerability reporting is enabled on this fork (Settings → Code security).
