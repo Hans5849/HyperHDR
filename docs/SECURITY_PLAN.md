@@ -1,6 +1,6 @@
 # Security plan
 
-Policy revision: `AP-2026.11.20-4` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-2` · Owner: Hans5849 · Reviewer role: F (security reviewer)
+Policy revision: `AP-2026.11.21-5` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-2` · Owner: Hans5849 · Reviewer role: F (security reviewer)
 
 F reviews code and its intended environment throughout planning, development, integration and installation readiness, alongside D's correctness review. **Neither D nor F grants merge or release authority**, and F cannot waive a gate.
 
@@ -111,7 +111,8 @@ SF-001 to SF-004, SF-006 and SF-007 come from the initial document review (2026-
 - **Restricted channel:** GitHub private security advisories on `Hans5849/HyperHDR`: Security tab → Advisories, with private vulnerability reporting enabled in Settings → Code security. Exploit detail, secret values and sensitive infrastructure facts go only there.
 - **Public records:** the public issue and the PM Control notice carry only the finding ID, severity, affected component, owner and next action. The same-run notice duty still applies.
 - **Upstream code** (inherited unchanged from `awawa-dev/HyperHDR`): the owner reports it privately to upstream under upstream's policy. Agents never post upstream. Public reporters are pointed to [SECURITY.md](../SECURITY.md).
-- **Security response owner:** Hans5849. **Shutdown fallback:** Hans5849.
+- **Security response owner:** Hans5849.
+- **Channel test (edition 1.0 §12).** Before launch, the channel must be tested end to end: private vulnerability reporting enabled (Q7), and a test advisory draft created and withdrawn by the owner. Until then, the restricted-reporting activation check fails. **Shutdown fallback:** Hans5849.
 - **Known gap (2026-11-20):** the agent sessions have no tool that creates or reads security advisories, so F cannot file in the channel itself. Until that is resolved, F stops at a redacted notice and asks the owner to open the advisory. Per the launch rules, the sprint cannot be Ready while this gap stands (decision D-006 on #74).
 
 **Suspected exposed secret or active compromise**

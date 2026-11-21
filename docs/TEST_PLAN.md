@@ -1,6 +1,6 @@
 # Test plan
 
-Policy revision: `AP-2026.11.20-4` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Security-relevant tests carry `security_ids` that map to [SECURITY_PLAN.md](SECURITY_PLAN.md) §3. Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
+Policy revision: `AP-2026.11.21-5` · Registry: [test-registry.json](test-registry.json) (one entry per required test: ID, requirement, purpose, prerequisites, exact command, environment, expected result, gate, owner, cost). Security-relevant tests carry `security_ids` that map to [SECURITY_PLAN.md](SECURITY_PLAN.md) §3. Update the registry with every test change; `T-AGENT-ENTRYPOINTS` checks that every registry ID is listed below.
 
 ## Gates
 
@@ -16,6 +16,16 @@ Pass/fail: a test passes only when it exits 0 on the exact SHA under evaluation.
 Install `cmake g++ qt6-base-dev libturbojpeg0-dev python3 python3-yaml`, then run the commands in the registry from a clean worktree at the repository root. Development may use targeted tests; merge and release use the full gate.
 
 ## Results and retrieval
+
+**Result records.** Each result record identifies:
+- the full candidate SHA or artifact digest;
+- the environment and tool versions;
+- start and end times, and the exit status;
+- the outcome of each shard;
+- log and artifact links;
+- limitations, and retention and access.
+
+A missing shard, architecture or required check leaves the gate pending. An environment failure is kept distinct from an implementation failure, and neither counts as a pass.
 
 - CI results: the workflow run for the head SHA (`Actions → HyperHDR CI Build`), job logs and uploaded artifacts. Retention follows the repository's Actions retention setting (see RESOURCE_LIMITS.md).
 - Each PR gate table and cycle report records SHA, date, commands, per-test outcome, run links and limitations.

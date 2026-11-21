@@ -26,7 +26,7 @@ def revision(path):
 
 
 entry = {name: ROOT / name for name in ("AGENTS.md", "CLAUDE.md")}
-shared = ["docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN.md",
+shared = ["docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/AGENT_ADAPTER.md", "docs/PROJECT_PLAN.md",
           "docs/TEST_PLAN.md", "docs/test-registry.json", "docs/RESOURCE_LIMITS.md",
           "docs/INSTALLATION_PROFILE.md", "docs/SECURITY_PLAN.md"]
 
@@ -45,10 +45,10 @@ for name, text in texts.items():
         check(f"({rel})" in text, f"{name} references {rel}")
     pm = re.findall(r"PM Control \(canonical dashboard\): issue #(\d+)", text)
     check(len(set(pm)) == 1, f"{name} names exactly one PM Control issue")
-    check("Sprint coordination" in text, f"{name} records the sprint coordination issue")
+    check("Operations log" in text, f"{name} records the operations log (sprint coordination) issue")
 
 revs = {n: revision(p) for n, p in entry.items()}
-for rel in ("docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/PROJECT_PLAN.md",
+for rel in ("docs/AGENT_POLICY.md", "docs/AGENT_WORKFLOW.md", "docs/AGENT_ADAPTER.md", "docs/PROJECT_PLAN.md",
             "docs/TEST_PLAN.md", "docs/RESOURCE_LIMITS.md",
             "docs/INSTALLATION_PROFILE.md", "docs/SECURITY_PLAN.md"):
     revs[rel] = revision(ROOT / rel)

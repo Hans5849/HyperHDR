@@ -1,10 +1,49 @@
 # Project plan
 
-Policy revision: `AP-2026.11.20-4` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
+Policy revision: `AP-2026.11.21-5` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
 
 ## Charter
 
 Deliver the smallest stable, measurable release of **Orange Pi 5 Plus (RK3588) native HDMI input → HyperHDR CPU processing → DDP → ESP32/WLED LEDs**, optimizing for verified end-to-end behaviour and preserving every proven colour, latency, reliability and security property. Parent roadmap: #7.
+
+Charter fields (edition 1.0 §4):
+- **Users:** the owner, as operator of the Orange Pi 5 Plus.
+- **Intended capability:** native HDMI capture, CPU processing and DDP output to WLED.
+- **Success measures:** the R1 criteria below, accepted on one pinned SHA.
+- **Scope:** R1. **Non-goals:** the deferred R2 items.
+- **Supported platforms:** Orange Pi 5 Plus with Debian 13 arm64 (Armbian) for acceptance; hosted CI on x86_64 and arm64 for development.
+- **Quality attributes:** memory safety, colour fidelity, latency, recovery.
+- **Accountable owner:** Hans5849.
+- **Roadmap horizon:** R1, then R2.
+- **PM review capacity:** about 5 decisions per batch, and at most 3 candidates waiting.
+
+**Increments:** one week (two for larger integrations). **Priority bands:** P0 critical defects and release blockers · P1 increment-critical · P2 normal backlog · P3 proposals.
+
+**Work states:** Backlog, Ready, In progress, In review, Needs validation, Done. A blockage records its cause, owner and unblock condition. A merged issue that still awaits acceptance stays in Needs validation. Labels confer no authority.
+
+**Definition of Ready**
+- recorded authority;
+- an understandable outcome with testable acceptance;
+- scope and non-goals;
+- dependencies and target branch;
+- risk tier and allowed actions;
+- tests and operational validation;
+- rollback considerations and a review estimate.
+
+**Definition of Done**
+- criterion-specific evidence, accepted by its authorized owner;
+- current required checks, and current D and F records;
+- required operational validation;
+- security and compatibility concerns resolved;
+- linked records updated.
+
+## Project (all releases)
+
+| Scope and baseline | Accepted weight | Completion | Awaiting acceptance |
+|---|---|---|---|
+| Project: R1 (R2 not yet scoped), baseline PROPOSED | Not baselined | Not baselined | See #74 |
+
+Each criterion counts once in the project total, under one primary component. Aggregate weights, never percentages. Show the numerator, denominator and baseline revision next to every percentage.
 
 ## Release R1: RK3588 CPU-only HDMI → WLED
 
@@ -34,8 +73,17 @@ Release stop condition: every criterion has evidence on the **same pinned candid
 
 See the Attention required table on #74 (D-001 policy adoption, D-002 baseline, D-003 activation, D-004 PR #72 supersession).
 
+## Risk register
+
+| ID | Cause → event → consequence | Likelihood / impact | Owner | Trigger | Mitigation / contingency | Status |
+|---|---|---|---|---|---|---|
+| RK-1 | Agents share the owner's admin identity → a misbehaving session merges or pushes to `master` → an unreviewed change lands | Low / High | Hans5849 | Any agent merge or `master` push | Merge delegation NONE; B disabled; instruction-level limits (D-006 2a); branch ruleset recommended (D-007) | Open |
+| RK-2 | No verified lease → two writers edit the same workstream → conflicting or lost work | Medium (once B1 and B2 are active) / Medium | Hans5849 | Activation of B1/B2 | B stays disabled until a lease is verified (D-003) | Open |
+| RK-3 | Hardware access delays → acceptance criteria can't be evidenced → R1 slips past the Sprint 1 deadline | High / Medium | Hans5849 | No operator session scheduled | Prepare Batch R and operator procedures; accept partial progress | Open |
+
 ## Change history
 
 | Date | Change | Decision |
 |---|---|---|
 | 2026-11-20 | Plan created under the operating standard; R1 baseline proposed | Pending D-002 |
+| 2026-11-21 | Aligned with consolidated edition 1.0: charter fields, Ready/Done definitions, states, priority bands, project row, risk register. Baseline unchanged | Pending D-002 |

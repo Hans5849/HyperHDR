@@ -1,6 +1,6 @@
 # Resource limits
 
-Policy revision: `AP-2026.11.20-4` · Checked: 2026-11-20 (setup) · Owner: Hans5849
+Policy revision: `AP-2026.11.21-5` · Checked: 2026-11-20 (setup) · Owner: Hans5849
 
 Agents re-check these each coordinator run where they can, and mark anything they cannot verify **Unknown**. Spending, purchases or limit changes are PM review items; agents never buy capacity or skip required tests for lack of it.
 
@@ -14,3 +14,24 @@ Agents re-check these each coordinator run where they can, and mark anything the
 | Model and API quotas | Unknown | Unknown | Unknown | Claude plan | 2026-11-20 | Rate-limit errors | Stop, report |
 | Owner review capacity | ≤ 3 PRs awaiting owner action; ~5 decisions per batch | See #74 | — | AGENT_WORKFLOW.md §6 | 2026-11-20 | Queue full | Prioritize repair and review |
 | Operator / board time | Owner-scheduled | — | — | Owner | 2026-11-20 | — | Batch acceptance steps |
+
+## Campaign budget (Sprint 1, proposed; needs owner approval, D-008)
+
+| Budget | Proposed limit | Notes |
+|---|---|---|
+| Writers | 2 (B1, B2) | Disabled until READY and D-003 |
+| Distinct candidates waiting on D, F or PM | 3 | Edition 1.0 §7 |
+| Review concurrency | 1 D and 1 F at a time | Their sessions are serial |
+| On-demand review dispatches | ≤ 4 per day per role | On top of the 16-hour recovery sweeps |
+| Dispatch retries / repair rounds | 2 transient retries per request; 2 repair rounds per candidate | Then escalate on #74 |
+| Writer runtime | Until the next A slot, minus 15 min to checkpoint | |
+| CI watch interval | ≤ 45 min per candidate | Then checkpoint and release |
+| Full CI matrix runs | ≤ 1 per candidate head | No duplicate equivalent runs |
+| Model usage / spend | Unknown (the plan allowance isn't readable by agents) | The owner sets warning and stop thresholds |
+| PM review time | About 30 min per 16-hour cycle | |
+
+**Thresholds.** Exhaustion never silently lowers model depth or test coverage. On a stop threshold, A holds new orders and escalates on #74.
+
+## Current usage
+
+Unknown. No development runs have happened yet. A records usage per cycle report, where measurable.

@@ -1,6 +1,6 @@
 # Installation profile
 
-Policy revision: `AP-2026.11.20-4` · Profile revision: `IP-2` · Accountable owner: Hans5849 · Last verified: 2026-11-20 (from repository docs and code only; **not** re-observed on the target)
+Policy revision: `AP-2026.11.21-5` · Profile revision: `IP-2` · Accountable owner: Hans5849 · Last verified: 2026-11-20 (from repository docs and code only; **not** re-observed on the target)
 
 ## Repository security profile (standard page 18)
 
