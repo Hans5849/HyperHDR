@@ -1,6 +1,6 @@
 # Project plan
 
-Policy revision: `AP-2026.11.21-7` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
+Policy revision: `AP-2026.11.21-8` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
 
 ## Charter
 
@@ -32,10 +32,10 @@ Charter fields (edition 1.0 §4):
 
 **Definition of Ready**
 - recorded authority;
-- an understandable outcome with testable acceptance;
+- an understandable outcome with testable acceptance and security criteria;
 - scope and non-goals;
 - dependencies and target branch;
-- risk tier and allowed actions;
+- risk tier, allowed actions and declared paths;
 - tests and operational validation;
 - rollback considerations and a review estimate.
 
@@ -105,3 +105,4 @@ See the Attention required table on #74 (D-001 policy adoption, D-002 baseline, 
 |---|---|---|
 | 2026-11-20 | Plan created under the operating standard; R1 baseline proposed | Pending D-002 |
 | 2026-11-21 | Aligned with consolidated edition 1.0: charter fields, Ready/Done definitions, states, priority bands, project row, risk register. Baseline unchanged | Pending D-002 |
+| 2026-11-21 | Edition 1.3 (`-8`): Definition of Ready adds security criteria and declared paths; G final audit before R1 Batch I; proposed development-complete time 2026-12-08. Baseline unchanged | Pending D-001, D-010 |

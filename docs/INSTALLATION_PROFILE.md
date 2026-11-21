@@ -1,6 +1,6 @@
 # Installation profile
 
-Policy revision: `AP-2026.11.21-7` · Profile revision: `IP-3` · Accountable owner: Hans5849 · Last verified: 2026-11-21 (from repository docs and code only; **not** re-observed on the target). `IP-3` changes only P3 (hosted CI, Linux-only scope); P1, P2 and P4 are unchanged from `IP-2`
+Policy revision: `AP-2026.11.21-8` · Profile revision: `IP-3` · Accountable owner: Hans5849 · Last verified: 2026-11-21 (from repository docs and code only; **not** re-observed on the target). `IP-3` changes only P3 (hosted CI, Linux-only scope); P1, P2 and P4 are unchanged from `IP-2`
 
 ## Repository security profile (standard page 18)
 

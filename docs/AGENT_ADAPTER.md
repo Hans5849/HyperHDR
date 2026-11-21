@@ -1,6 +1,6 @@
 # Provider adapter record: Claude Code cloud
 
-Policy revision: `AP-2026.11.21-7` · Adapter revision: `ADP-1` · Owner: Hans5849 · Verified: 2026-11-20 to 2026-11-21, by the setup session (`session_01EsaroCaQRu7aWfttihA7tB`), from tool responses and readbacks
+Policy revision: `AP-2026.11.21-8` · Adapter revision: `ADP-1` · Owner: Hans5849 · Verified: 2026-11-20 to 2026-11-21, by the setup session (`session_01EsaroCaQRu7aWfttihA7tB`), from tool responses and readbacks
 
 Edition 1.0 §15 requires every provider capability to be mapped to an operation the tools **actually expose**, with evidence. Legacy names from the playbook are examples, not guaranteed commands. This record covers the one provider in use. No OpenAI or Codex adapter is configured.
 
@@ -37,6 +37,7 @@ Edition 1.0 §15 requires every provider capability to be mapped to an operation
 | B1, B2 Developer | `claude-opus-5-5`, default effort | `claude-opus-5-5`, high effort | 1 order per run plus follow-ons until the next A slot; CI watch ≤ 45 min |
 | D Correctness | `claude-opus-5-5`, default effort | `claude-opus-5-5`, high effort (required for Detailed or RED work) | 1 candidate per dispatch |
 | F Security | `claude-opus-5-5`, high effort | `claude-opus-5-5`, high effort (required for release candidates) | 1 candidate per dispatch |
+| G Final auditor (edition 1.3 §22) | — (Detailed only) | `claude-fable-5-2` (preferred mapping). The model ID must be verified on the account before dispatch; if it is unavailable, G is reported **Blocked**, never silently substituted | Owner-approved high token, spend and runtime ceiling per candidate (D-010(a)); recorded with the actual model |
 
 **Limits of this matrix.**
 - Effort settings are proposals. The current tasks don't set effort explicitly (`model` is empty, so the session default applies).

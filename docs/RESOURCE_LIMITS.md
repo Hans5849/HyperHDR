@@ -1,6 +1,6 @@
 # Resource limits
 
-Policy revision: `AP-2026.11.21-7` · Checked: 2026-11-20 (setup) · Owner: Hans5849
+Policy revision: `AP-2026.11.21-8` · Checked: 2026-11-20 (setup) · Owner: Hans5849
 
 Agents re-check these each coordinator run where they can, and mark anything they cannot verify **Unknown**. Spending, purchases or limit changes are PM review items; agents never buy capacity or skip required tests for lack of it.
 
@@ -29,6 +29,7 @@ Agents re-check these each coordinator run where they can, and mark anything the
 | Full CI matrix runs | ≤ 1 per candidate head | No duplicate equivalent runs |
 | Model usage / spend | Unknown (the plan allowance isn't readable by agents) | The owner sets warning and stop thresholds |
 | PM review time | About 30 min per 16-hour cycle | |
+| G final audit (edition 1.3 §22) | **Not approved** (D-010(a)). Proposed: one audit per R1 candidate, `claude-fable-5-2` Detailed, one remediation round, then escalate | Registered in the inventory and shutdown control before dispatch |
 
 **Thresholds.** Exhaustion never silently lowers model depth or test coverage. On a stop threshold, A holds new orders and escalates on #74.
 

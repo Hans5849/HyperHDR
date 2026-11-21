@@ -1,6 +1,6 @@
 # Agent workflow: cadence, work, review, release and shutdown
 
-Policy revision: `AP-2026.11.21-7` · Standard: consolidated edition 1.0 · Authority: [AGENT_POLICY.md](AGENT_POLICY.md) · Adapter: [AGENT_ADAPTER.md](AGENT_ADAPTER.md) · PM Control: issue #74 · Operations log: issue #75
+Policy revision: `AP-2026.11.21-8` · Standard: consolidated edition 1.3 · Authority: [AGENT_POLICY.md](AGENT_POLICY.md) · Adapter: [AGENT_ADAPTER.md](AGENT_ADAPTER.md) · PM Control: issue #74 · Operations log: issue #75
 
 The primary measure is **accepted criterion weight against an approved baseline**. A closed issue, a merged PR, a successful scheduler run or a clean scan does not by itself establish acceptance.
 
@@ -32,7 +32,8 @@ The cycle reconciles work; it does not require code each time. "No ready work" i
 | B2 | See the setup receipt on #74 | Writer 2. Schedules disabled. |
 | D | `session_01Esaro9zPz325qLhtXNxvDV` | Correctness review. Distinct from B and F. |
 | F | `session_01EsaroBCzJDi3ScMeW3YJ8Z` | Security review. Distinct from B and D. |
-| Shutdown control | `session_01EsaroCsc36j7qPLVSRPa4N` | Dedicated; outside A–F. |
+| G Final auditor | Not created | One dedicated, independent session per release candidate (§17). It is created only on an owner-approved assignment and budget (D-010), and registered in the inventory and shutdown control before dispatch. |
+| Shutdown control | `session_01EsaroCsc36j7qPLVSRPa4N` | Dedicated; outside A–G. |
 
 **Session continuity.** A role may continue its session or start a new run. Neither retained chat history nor a successful scheduler status proves usable repository access, so every run re-verifies its checkout, credentials and durable records before writing.
 
@@ -53,6 +54,8 @@ Every cron is prefixed `CRON_TZ=America/New_York`. Cron cannot express a 16-hour
 | F recovery sweep | 01:45, 17:45 | 09:45 | `45 1,17 1-31/2 * *` · `45 9 2-30/2 * *` |
 
 **D and F also run on demand** when B calls them (§9). The sweeps recover missed requests; they are not the only review opportunity.
+
+**Edition 1.3 recovery sweep.** Edition 1.3 moves the D/F recovery sweep into A's run (A run step 7). The separate D and F sweep tasks above predate it. They stay registered, unchanged, until the owner decides D-010(d): changing a schedule is a protected action. Today they are the only active automation (F), and A is paused.
 
 **Time zone and daylight saving.** This is a wall-clock alternative to the edition's default of UTC elapsed time, so its DST behaviour is stated here:
 - Sprint 1 (2026-11-20 to 2026-12-12) is entirely in EST (UTC−05:00). DST ended on 2026-11-01 and next begins on 2027-03-14.
@@ -184,7 +187,9 @@ Orders are posted on the operations log (#75) and linked from #74.
 
 **When B may call D or F.** When a missing or stale review blocks an authorized candidate, B may trigger D for correctness and F for a required security review. This is standing dispatch authority, within the recorded concurrency, usage, retry and campaign limits (D-008). It needs no per-call PM decision once development is active.
 
-**Limits.** B cannot approve its own work, waive a gate, expand scope, raise the review generation, or swap reviewers to get a different answer.
+**Limits.**
+- B cannot approve its own work, waive a gate, expand scope, raise the review generation, or swap reviewers to get a different answer.
+- **B supplies only the candidate identity and evidence.** The controller issues the reviewer's standard instruction (the role prompt that the D or F session holds, per edition 1.3 §18). B cannot edit that instruction, or choose the reviewer or the model.
 
 **Records.**
 - **Request:** request ID; PR; criteria; D or F; head and base SHAs; policy and profile revisions; tests; known findings; question; reviewer; budget; deadline; result destination.
@@ -236,7 +241,7 @@ Security is governed by [SECURITY_PLAN.md](SECURITY_PLAN.md) and [INSTALLATION_P
 **Integration preview.** C, or B under an order, builds an isolated preview of the approved PRs in dependency order and records the input SHAs, the preview commit and its tree. It runs the combined suite and a disposable installation rehearsal.
 
 **Final candidate.**
-- Merge each PR only after its §10 gates pass.
+- Merge each PR only after its §10 gates pass. If the §17 audit changes the candidate, every gate applies again to the resulting SHA.
 - Compare the final release tree with the preview.
 - Rerun the full suite and the rehearsal on the actual final SHA.
 - Obtain F's final-candidate disposition against the current profile.
@@ -247,6 +252,18 @@ Security is governed by [SECURITY_PLAN.md](SECURITY_PLAN.md) and [INSTALLATION_P
 |---|---|
 | **R** (rehearsal) | A clean, disposable environment only |
 | **I** (operational) | Explicit owner approval for the named target and profile. Covers backups, then the install, upgrade, interruption-recovery, rollback and uninstall cases. On the Orange Pi, the operator performs the physical steps (`docs/rk3588-acceptance-run.md`) |
+
+**Batch I ordering (edition 1.3).**
+- The §17 final audit must finish before Batch I.
+- The owner then explicitly approves the named live-test procedure, target and safeguards.
+
+**Engineering hardware sessions** (proposed, D-010(b)):
+- An owner-directed session on the board **before** a release candidate exists (for example #84, 2026-11-28/29) is engineering validation, not Batch I. Its evidence:
+  - drives development;
+  - can show that a criterion's procedure works;
+  - does not record R1 acceptance.
+- R1's Batch I is repeated on the audited final SHA.
+- The physical safety rules (AGENT_POLICY.md §7) and owner-only board operation apply unchanged.
 
 **Acceptance evidence.**
 - Each acceptance case records:
@@ -260,6 +277,7 @@ Security is governed by [SECURITY_PLAN.md](SECURITY_PLAN.md) and [INSTALLATION_P
 **Release package.** E, or A when E is omitted, assembles:
 - the release and baseline revisions, accepted criteria, the final SHA and artifact digests;
 - D and F dispositions, CI and platform results, and operational acceptance;
+- the §17 audit state and outcome. A final audit that is incomplete or Inconclusive, or has blocking findings, is an unmet gate;
 - open defects, risks and exceptions;
 - the changelog, rollback, and the exact release action requested.
 
@@ -305,8 +323,9 @@ Declare READY only when the required records are adopted and the mandatory check
 - Deadline: **2026-12-12 23:59 America/New_York**.
 - Cutoff and shutdown: **23:14 (2026-12-13T04:14:00Z)**.
 - Named human fallback: Hans5849, who also verifies the stopped state at the deadline.
+- **Development-complete time** (edition 1.3 kickoff): proposed **2026-12-08 23:59 America/New_York** (D-010(c)). It leaves about four days before the cutoff for integration, Batch R, the G audit and Batch I. After it, A issues no new development orders, only repairs of release blockers.
 
-**Inventory.** It lives in the latest SETUP RECEIPT and its addenda on #74, plus any INVENTORY ADDITION comment. Every scheduled task, recovery sweep, extra worker, on-demand review, retry and spawned subworker is added as it appears. Untracked automation and unilateral deadline extensions are prohibited.
+**Inventory.** It lives in the latest SETUP RECEIPT and its addenda on #74, plus any INVENTORY ADDITION comment. Every scheduled task, recovery sweep, extra worker, on-demand review, the G audit, retry and spawned subworker is added as it appears. Untracked automation and unilateral deadline extensions are prohibited.
 
 **Shutdown sequence.**
 1. **Stop.** At the cutoff, set the campaign to STOPPING on #75. Stop orders, claims and review dispatch. Disable every campaign trigger and read each back.
@@ -348,6 +367,16 @@ Unknown values stay Unknown.
 
 ## 16. Evidence record templates
 
+- **Final audit report (G, §17):**
+  - initial and final SHAs;
+  - coverage and gaps;
+  - findings with reproductions;
+  - fixes, with their D and F evidence;
+  - validation;
+  - unresolved risks and limitations;
+  - usage;
+  - a proceed or hold recommendation.
+
 - **Cycle result:**
   - run and order IDs, role, profile, model and times;
   - objective; candidate (base → head, with the PR);
@@ -366,3 +395,54 @@ Unknown values stay Unknown.
   - method, with freshness enforcement;
   - validity: start, expiry and revocation;
   - execution: the actual PR, head and result.
+
+## 17. Final audit and remediation (G; edition 1.3 §22)
+
+**When.** G runs only:
+- after sprint development and the Batch R objectives are complete;
+- on a release candidate.
+
+A campaign that produces no release candidate records that fact and runs no audit. G supplements D and F and never supplies either gate. The auditor must be independent of the candidate's developers.
+
+**Profile and budget.**
+- G uses a dedicated Detailed profile, with an **explicitly approved** high token, spend and runtime budget (D-010(a)).
+- Preferred mapping: `claude-fable-5-2` (AGENT_ADAPTER.md §3). Record the actual model and the resource ceilings.
+- The size of the budget grants no extra authority.
+
+**Sequence.**
+1. Pin the complete candidate (SHA and artifact digest), its test evidence and the installation-profile revision in the candidate record, and mark it **READY FOR INDEPENDENT FINAL AUDIT**. Link the assignment from #74.
+2. Provision a dedicated independent session and an isolated worktree, with:
+   - bounded scope;
+   - permitted commands and environments;
+   - token, spend, runtime and retry limits;
+   - a report destination.
+
+   Verify access, and register the session in the inventory and shutdown control, **before** dispatch.
+3. Audit the full candidate for correctness, security, integration and deployment readiness, including:
+   - failure paths and dependencies;
+   - configuration;
+   - installation, upgrade and rollback.
+
+   Record coverage and gaps. Distinguish confirmed defects from suspected risks.
+4. Document each finding: SHA and location, the severity rationale, reproduction or other supporting evidence, impact and owner. Follow the notice and restricted-reporting rules (SECURITY_PLAN.md).
+   - Reproduce confirmed release-blocking defects in isolation.
+   - Fix them within the approved assignment, taking writer ownership and respecting the writer cap (§6).
+   - Escalate anything broader. RED-tier fixes need owner authorization.
+5. Every G-authored change gets separate, independent D and F review; G's own checks count as author validation only. Revalidate the actual final SHA with the required tests, the combined suite and an isolated rehearsal. Renew any affected dispositions.
+
+**Report.**
+- Submitted to the owner through PM Control (#74), using the §16 template.
+- **State:** Not started, In progress, Blocked or Complete.
+- **Outcome:** No blocking findings, Blocking findings remain, or Inconclusive.
+
+Both appear on the #74 line `Final audit G: [State] · [Outcome] · [Candidate SHA] · [Report link] · [Next action/owner]`.
+
+**Gates.** An outcome of *Blocking findings remain* or *Inconclusive* is an unmet release gate (§12). Batch I stays blocked until:
+- the audit is Complete;
+- the required gates are satisfied;
+- the owner approves the live-test procedure, target and safeguards.
+
+**Campaign control.**
+- G stops and checkpoints at the cutoff, or when its budget is exhausted.
+- After the cutoff or expiry, G needs a recorded continuation authorization, refreshed limits and a refreshed shutdown control before it starts or resumes.
+- Post-sprint work never extends authority.
