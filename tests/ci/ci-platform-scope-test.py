@@ -107,6 +107,23 @@ check(lin["strategy"]["matrix"].get("include") == "${{ fromJSON(needs.changes.ou
 smoke = [s for s in lin["steps"] if s.get("name") == "Install package and run command-line checks"]
 check(bool(smoke) and "trixie" in str(smoke[0].get("if", "")), "the Debian 13 install and CLI smoke test stays")
 
+# --- token exposure and script injection (security review RR-002: F82-2, F82-3) -------
+for job_name, job in jobs.items():
+    perms = job.get("permissions") or {}
+    writes = {k for k, v in perms.items() if v == "write"} - {"security-events"}
+    for st in job.get("steps", []):
+        if str(st.get("uses", "")).startswith("actions/checkout") and writes:
+            check((st.get("with") or {}).get("persist-credentials") is False,
+                  f"push-pull.yml/{job_name}: checkout doesn't persist a token that has {sorted(writes)}")
+for name, wf in workflows.items():
+    if name not in ("push-pull.yml", "fork-guard.yml"):
+        continue   # inherited upstream workflows are audited separately (docs/fork-scope.md)
+    for job_name, job in (wf.get("jobs") or {}).items():
+        for st in job.get("steps", []):
+            run = str(st.get("run", ""))
+            check("${{ github." not in run and "${{ matrix." not in run,
+                  f"{name}/{job_name}/{st.get('name', 'step')}: no inline github/matrix expression in a run script")
+
 # --- triggers, cancellation, permissions ---------------------------------------------
 conc = ci.get("concurrency", {})
 cancel = str(conc.get("cancel-in-progress", ""))

@@ -249,6 +249,9 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          # The job token has actions: write for the cache cleanup step only;
+          # don't leave it in .git/config where build scripts could read it.
+          persist-credentials: false
 
       - name: Download ccache files
         if: env.USE_CACHE == 'true'
@@ -278,17 +281,21 @@ jobs:
       - name: Check Debian package metadata
         if: matrix.distroName == 'debian' || matrix.distroName == 'ubuntu'
         shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           DEB=$(find deploy -maxdepth 1 -type f -name "Hyper*.deb" | head -n 1)
           test -n "$DEB" || { echo "no .deb produced"; exit 1; }
-          bash tests/packaging/check-deb.sh "$DEB" --version-file version --arch ${{ matrix.architecture }}
+          bash tests/packaging/check-deb.sh "$DEB" --version-file version --arch "$ARCHITECTURE"
 
       - name: Install package and run command-line checks
         if: matrix.distroName == 'debian' && matrix.distroVersion == 'trixie' && (matrix.architecture == 'amd64' || matrix.architecture == 'arm64')
         shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           docker run --rm -v "$PWD:/w:ro" --entrypoint /bin/bash \
-            ghcr.io/awawa-dev/${{ matrix.architecture }}/debian:trixie -c '
+            "ghcr.io/awawa-dev/$ARCHITECTURE/debian:trixie" -c '
               set -e
               apt-get update -qq
               DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /w/deploy/Hyper*.deb
@@ -301,9 +308,12 @@ jobs:
         if: startsWith(github.event.ref, 'refs/tags') == false
         continue-on-error: true
         run: |
-          gh cache list --ref "${{ github.ref }}" --key "${{ matrix.architecture }}-${{ matrix.distroName }}-${{ matrix.distroVersion }}-ccache-" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
+          gh cache list --ref "$CACHE_REF" --key "$CACHE_KEY" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CACHE_REF: ${{ github.ref }}
+          CACHE_KEY: ${{ matrix.architecture }}-${{ matrix.distroName }}-${{ matrix.distroVersion }}-ccache-
 
       - name: Upload artifacts (release)
         if: startsWith(github.event.ref, 'refs/tags') && github.event_name != 'pull_request'
@@ -377,6 +387,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
@@ -444,6 +455,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Generate environment variables from version and tag
         run: |

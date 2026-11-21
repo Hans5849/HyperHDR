@@ -57,6 +57,7 @@ Applies to `Hans5849/HyperHDR`, a public development fork of [awawa-dev/HyperHDR
 
 - **Branch protection.** No agent tool can read branch protection or rulesets. The owner must confirm that no removed job is required: `Windows`, `macOS 15 (x64)`, `macOS 15 (arm64: M1/M2/M3/M4)`, `Sign Windows Installer`, and every Linux matrix name except `arm64/debian:trixie`.
 - **Recommended required checks:** `Fork CI guard` and `Repository policy checks` (both always run), plus `arm64/debian:trixie` and the two `V4L2 capture and BGR24 decoder tests …` jobs.
+- **Fork guard enforcement.** `Fork CI guard` detects a reintroduced platform or matrix, but it only *prevents* one when it is a **required check** on `master` and upstream syncs land **through a PR**, never by a direct push. Both are owner settings: a branch ruleset on `master` that requires a PR and requires `Fork CI guard` (security review RR-002, F82-4).
 - **Skipped jobs.** GitHub treats a job skipped by its `if:` condition (for example on a documentation-only change) as passing a required check, so path selection never leaves a required check pending.
 
 ## Release requirements
