@@ -66,7 +66,7 @@ jobs:
 ######################
 
   RepositoryPolicy:
-    name: Repository policy and CI scope checks
+    name: Repository policy checks
     runs-on: ubuntu-26.04
     if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
     steps:

@@ -1,4 +1,4 @@
-> **Scope of this fork (Hans5849/HyperHDR):** only Linux is a supported and CI-tested target. The primary target is Debian 13 arm64 on the Orange Pi 5 Plus (RK3588); x86_64 Linux is used for development and testing. The Windows and macOS instructions below are kept from upstream, but this fork neither builds nor tests those platforms in CI and makes no claim that they work. See [docs/ci-scope.md](docs/ci-scope.md).
+> **Scope of this fork (Hans5849/HyperHDR):** only Linux is a supported and CI-tested target. The primary target is Debian 13 arm64 on the Orange Pi 5 Plus (RK3588); x86_64 Linux is used for development and testing. The Windows and macOS instructions below are kept from upstream, but this fork neither builds nor tests those platforms in CI and makes no claim that they work. See [docs/fork-scope.md](docs/fork-scope.md).
 
 # Available methods to build HyperHDR:
 ## 1. [Native build](#native-build)

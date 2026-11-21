@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """CI scope checks for this fork: Linux-only CI, with the RK3588 release gates kept.
 
-Owner decision (2026-11-21): Windows and macOS are outside the supported scope of
-Hans5849/HyperHDR, so no workflow may run a Windows or macOS job or sign Windows
-installers. These checks also keep the required Linux testing from being lost:
+Owner decision (2026-11-21, issue #81): Windows and macOS are outside the supported
+scope of Hans5849/HyperHDR, so no workflow may run a Windows or macOS job or sign
+Windows installers. This test also guards against upstream synchronization
+re-introducing automatic multi-distribution matrices or ungated upstream
+publishing, and it runs from the fork-only fork-guard.yml as well as push-pull.yml. These checks also keep the required Linux testing from being lost:
 - the sanitizer suites run on x86_64 and arm64, with every required suite present;
 - CodeQL and the repository-policy tests stay in routine CI;
 - releases still need policy, sanitizer, CodeQL and Debian 13 package jobs;
@@ -85,9 +87,9 @@ for needle, what in [
 ]:
     check(needle in steps, f"CaptureTests keeps {what}")
 check(jobs["analyze"]["strategy"]["matrix"]["language"] == ["cpp", "javascript"], "CodeQL keeps cpp and javascript")
-check("RepositoryPolicy" in jobs and "needs" not in jobs["RepositoryPolicy"], "repository policy job runs on every event (no change gate)")
+check("RepositoryPolicy" in jobs and "needs" not in jobs.get("RepositoryPolicy", {}), "repository policy job runs on every event (no change gate)")
 for job_name in ("CaptureTests", "Linux", "analyze"):
-    check("needs.changes.outputs.code == 'true'" in str(jobs[job_name].get("if", "")), f"{job_name} is skipped only for documentation-only changes")
+    check("needs.changes.outputs.code == 'true'" in str(jobs.get(job_name, {}).get("if", "")), f"{job_name} is skipped only for documentation-only changes")
 
 # --- package matrix ---------------------------------------------------------------------
 spec = importlib.util.spec_from_file_location("cc", ROOT / "scripts/ci/classify-changes.py")
@@ -98,8 +100,8 @@ check({"distroName": "debian", "distroVersion": "trixie", "architecture": "arm64
       "release validation builds the Debian 13 arm64 package")
 check(cc.linux_matrix("push", "refs/heads/x", False) == cc.ROUTINE and len(cc.ROUTINE) == 1,
       "routine pushes build one package (Debian 13 arm64), not the full distribution matrix")
-lin = jobs["Linux"]
-check(lin["strategy"]["matrix"]["include"] == "${{ fromJSON(needs.changes.outputs.linux_matrix) }}",
+lin = jobs.get("Linux", {"strategy": {"matrix": {}}, "steps": []})
+check(lin["strategy"]["matrix"].get("include") == "${{ fromJSON(needs.changes.outputs.linux_matrix) }}",
       "the Linux matrix comes from the change classifier")
 smoke = [s for s in lin["steps"] if s.get("name") == "Install package and run command-line checks"]
 check(bool(smoke) and "trixie" in str(smoke[0].get("if", "")), "the Debian 13 install and CLI smoke test stays")
@@ -111,6 +113,68 @@ check("refs/tags/" in cancel and "refs/heads/master" in cancel, "superseded runs
 check(ci.get("permissions") == {"contents": "read"}, "workflow token defaults to contents: read")
 check("workflow_dispatch" in ci["on"] and "compat_matrix" in ci["on"]["workflow_dispatch"]["inputs"],
       "optional compatibility matrix is available by manual dispatch")
+
+# --- no automatic multi-distribution matrix, no ungated upstream publishing ----------
+UPSTREAM_GATE = "github.repository == 'awawa-dev/HyperHDR'"
+AUTO = {"push", "pull_request", "schedule", "release", "workflow_run"}
+for name, wf in workflows.items():
+    on = wf["on"] if isinstance(wf["on"], dict) else {k: None for k in ([wf["on"]] if isinstance(wf["on"], str) else wf["on"])}
+    automatic = bool(AUTO & set(on))
+    text = (WF_DIR / name).read_text()
+    for job_name, job in (wf.get("jobs") or {}).items():
+        gated = UPSTREAM_GATE in str(job.get("if", ""))
+        matrix = (job.get("strategy") or {}).get("matrix", {})
+        static = isinstance(matrix, dict) and not str(matrix.get("include", "")).startswith("${{")
+        distros = set()
+        if static:
+            for k in ("distroVersion", "distroName"):
+                v = matrix.get(k)
+                if isinstance(v, list):
+                    distros |= set(map(str, v))
+            for inc in matrix.get("include", []) or []:
+                if isinstance(inc, dict):
+                    distros |= {str(inc.get("distroVersion", "")), str(inc.get("distroName", ""))} - {""}
+        check(not (automatic and not gated and len(distros) > 2),
+              f"{name}/{job_name}: no automatic multi-distribution matrix ({sorted(distros)[:6]})")
+        job_text = str(job)
+        # Upstream deploy targets, not mere use of upstream build images or downloads.
+        publishes_upstream = "awawa-dev.github.io" in job_text or "'repository-name': 'awawa-dev/" in job_text
+        if automatic and publishes_upstream:
+            check(gated, f"{name}/{job_name}: upstream publishing is gated to awawa-dev/HyperHDR")
+for name in ("image-builder.yml", "image-builder-from-repo.yml"):
+    if name in workflows:
+        on = workflows[name]["on"]
+        check(list(on) == ["workflow_dispatch"], f"{name}: upstream image builder stays manual only")
+if "publish-daily-development-build.yml" in workflows:
+    for job_name, job in workflows["publish-daily-development-build.yml"]["jobs"].items():
+        check(UPSTREAM_GATE in str(job.get("if", "")), f"publish-daily/{job_name}: gated to upstream")
+if "upload-to-github-pages.yml" in workflows:
+    for job_name, job in workflows["upload-to-github-pages.yml"]["jobs"].items():
+        check(UPSTREAM_GATE in str(job.get("if", "")), f"upload-to-github-pages/{job_name}: gated to upstream")
+
+# --- the upstream-sync safeguard itself ------------------------------------------------
+guard = workflows.get("fork-guard.yml")
+check(guard is not None, "fork-guard.yml exists (fork-only file, survives upstream syncs)")
+if guard:
+    check({"push", "pull_request"} <= set(guard["on"]), "fork guard runs on push and pull_request")
+    check("paths" not in str(guard["on"]) and "paths-ignore" not in str(guard["on"]), "fork guard is never path-filtered")
+    g_steps = " ".join(str(st.get("run", "")) for j in guard["jobs"].values() for st in j.get("steps", []))
+    check("tests/ci/ci-platform-scope-test.py" in g_steps and "tests/ci/classify-changes-test.py" in g_steps,
+          "fork guard runs the CI-scope and change-selection tests")
+    check(all("needs" not in j for j in guard["jobs"].values()), "fork guard depends on no other job")
+check({"changes", "RepositoryPolicy"} <= set(jobs), "push-pull.yml keeps the change-selection and policy jobs")
+rp = " ".join(str(st.get("run", "")) for st in jobs.get("RepositoryPolicy", {}).get("steps", []))
+check("tests/ci/ci-platform-scope-test.py" in rp, "the release-gating policy job also runs the CI-scope test")
+
+# --- durable scope documentation ----------------------------------------------------
+fork_doc = (ROOT / "docs/fork-scope.md")
+check(fork_doc.is_file(), "docs/fork-scope.md exists")
+if fork_doc.is_file():
+    t = fork_doc.read_text()
+    for needle in ("Orange Pi 5 Plus", "Debian 13 arm64", "x86-64", "outside", "manual request", "remain intact", "mandatory"):
+        check(needle in t, f"fork-scope.md states the objective containing {needle!r}")
+readme = (ROOT / "README.md").read_text()
+check("## This fork: Hans5849/HyperHDR" in readme and "docs/fork-scope.md" in readme, "README.md has the fork scope section")
 
 # --- the hardware workflow is not touched by this scope ---------------------------------
 board = workflows["rk3588-board.yml"]

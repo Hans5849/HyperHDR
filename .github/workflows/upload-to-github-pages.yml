@@ -17,6 +17,9 @@ jobs:
   Linux:
     name: ${{ matrix.architecture }}/${{ matrix.distroName}}:${{ matrix.distroVersion }}
     runs-on: ${{ startsWith(matrix.architecture, 'arm') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    # Upstream publishing (awawa-dev.github.io). Never runs in a fork, even if the
+    # workflow is re-enabled; see docs/fork-scope.md.
+    if: github.repository == 'awawa-dev/HyperHDR'
     env:
       platform: ${{ startsWith(matrix.architecture, 'arm') && 'rpi' || 'linux' }}
     strategy:      
@@ -86,6 +89,7 @@ jobs:
   Upload:
     name: Upload to Github Pages
     runs-on: ubuntu-24.04
+    if: github.repository == 'awawa-dev/HyperHDR'
     needs: [Linux]
 
     steps:

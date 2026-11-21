@@ -92,6 +92,7 @@ MENTIONED_ONLY = {
     "docs/rk3588-board-session.md": "named in an rk3588-board.yml comment",
     # Read only by tests/ci/agent-entrypoints-test.py, which runs in the always-on
     # RepositoryPolicy job; the policy branch also names them in a step title.
+    "docs/fork-scope.md": "named in workflow comments; read only by the always-on CI-scope test",
     "AGENTS.md": "read only by the always-on repository-policy tests",
     "CLAUDE.md": "read only by the always-on repository-policy tests",
 }

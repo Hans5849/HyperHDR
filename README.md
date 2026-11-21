@@ -1,5 +1,17 @@
 ![C++20](https://img.shields.io/badge/Language-C%2B%2B20-blue) ![CMake](https://img.shields.io/badge/Build%20System-CMake-orange) ![MIT](https://img.shields.io/badge/License-MIT-brightgreen) ![Objective‑C++](https://img.shields.io/badge/Language-Objective‑C%2B%2B-lightblue) ![JavaScript](https://img.shields.io/badge/Language-JavaScript-teal) ![HTML](https://img.shields.io/badge/Language-HTML-orange) ![Linear Algebra](https://img.shields.io/badge/Linear%20Algebra-Vector%20Computations-maroon) ![JSON API](https://img.shields.io/badge/JSON%20API-supported-blue) ![Bootstrap 5](https://img.shields.io/badge/UI‑Framework-Bootstrap%205-purple) ![DirectX](https://img.shields.io/badge/DirectX-supported-lightblue) ![Wayland‑PipeWire](https://img.shields.io/badge/Wayland‑PipeWire-supported-teal) ![Sound Reactive](https://img.shields.io/badge/Sound-Reactive-brightgreen) ![MQTT](https://img.shields.io/badge/MQTT-supported-orange) ![mDNS‑Zeroconf](https://img.shields.io/badge/mDNS‑Zeroconf-supported-lightblue) ![USB Grabbers](https://img.shields.io/badge/USB%20Grabbers-enabled-blueviolet) ![Raspberry Pi ARM](https://img.shields.io/badge/Raspberry%20Pi‑ARM-64bit-brightgreen) ![x64](https://img.shields.io/badge/Architecture-x64-blue) ![ARM](https://img.shields.io/badge/Architecture-ARM-orange) ![WLED](https://img.shields.io/badge/WLED-supported-brightgreen) ![Home Assistant](https://img.shields.io/badge/Home%20Assistant-supported-orange) ![Adalight](https://img.shields.io/badge/Adalight-supported-purple)
 
+## This fork: Hans5849/HyperHDR
+
+This is a **public development fork** of [awawa-dev/HyperHDR](https://github.com/awawa-dev/HyperHDR), focused on the Orange Pi 5 Plus (RK3588) HDMI → HyperHDR → DDP → WLED pipeline. Its scope differs from upstream:
+
+- **Primary supported deployment and release target:** Orange Pi 5 Plus (RK3588), Armbian Debian 13 arm64.
+- **Linux x86-64:** supported for development, automated regression testing and CI.
+- **Windows and macOS:** outside this fork's supported development, testing and release scope. This fork does not build or test them and makes no claim that they work. Their source code and build-system support remain intact, so support can be restored later.
+- **Other Linux distributions:** not routine release targets. Compatibility builds run only on manual request.
+- **Testing:** all RK3588-relevant functional, sanitizer, security, regression and release-acceptance testing remains mandatory.
+
+Details: [docs/fork-scope.md](docs/fork-scope.md). The platform statements in the rest of this README describe **upstream** HyperHDR.
+
 ## About
 
 HyperHDR is an open-source ambient lighting system for TVs and music setups. It performs real-time analysis of video and audio streams to create immersive LED lighting. Designed with a strong focus on stability, high performance, and high-fidelity video decoding and mapping, HyperHDR delivers precise and vibrant LED visuals. Optimized for both single- and multi-threaded video processing, it runs seamlessly on **Windows**, **macOS** (x64 & arm64), and **Linux** (x64 & ARM, including Raspberry Pi).
