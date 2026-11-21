@@ -363,6 +363,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Run composite CodeQL job for '${{matrix.language}}' language
         uses: ./.github/actions/codeql

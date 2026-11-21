@@ -110,11 +110,18 @@ check(bool(smoke) and "trixie" in str(smoke[0].get("if", "")), "the Debian 13 in
 # --- token exposure and script injection (security review RR-002: F82-2, F82-3) -------
 for job_name, job in jobs.items():
     perms = job.get("permissions") or {}
-    writes = {k for k, v in perms.items() if v == "write"} - {"security-events"}
+    writes = {k for k, v in perms.items() if v == "write"}
     for st in job.get("steps", []):
         if str(st.get("uses", "")).startswith("actions/checkout") and writes:
             check((st.get("with") or {}).get("persist-credentials") is False,
                   f"push-pull.yml/{job_name}: checkout doesn't persist a token that has {sorted(writes)}")
+codeql_action = ROOT / ".github/actions/codeql/action.yml"
+if codeql_action.is_file():
+    ca = yaml.safe_load(codeql_action.read_text())
+    for st in (ca.get("runs") or {}).get("steps", []):
+        if str(st.get("uses", "")).startswith("actions/checkout"):
+            check((st.get("with") or {}).get("persist-credentials") is False,
+                  "codeql composite action: inner checkout doesn't persist the security-events token (F82-5)")
 for name, wf in workflows.items():
     if name not in ("push-pull.yml", "fork-guard.yml"):
         continue   # inherited upstream workflows are audited separately (docs/fork-scope.md)
