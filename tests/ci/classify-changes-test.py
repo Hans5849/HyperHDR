@@ -90,6 +90,10 @@ MENTIONED_ONLY = {
     "BUILDING.md": "named in a hyperhdr-doctor.sh warning message",
     "docs/diagnostics.md": "named in a hyperhdr-doctor.sh comment",
     "docs/rk3588-board-session.md": "named in an rk3588-board.yml comment",
+    # Read only by tests/ci/agent-entrypoints-test.py, which runs in the always-on
+    # RepositoryPolicy job; the policy branch also names them in a step title.
+    "AGENTS.md": "read only by the always-on repository-policy tests",
+    "CLAUDE.md": "read only by the always-on repository-policy tests",
 }
 tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 docs_only = [p for p in tracked if cc.is_docs_only(p)]
