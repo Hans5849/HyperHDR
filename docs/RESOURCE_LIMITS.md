@@ -1,12 +1,12 @@
 # Resource limits
 
-Policy revision: `AP-2026.11.21-5` · Checked: 2026-11-20 (setup) · Owner: Hans5849
+Policy revision: `AP-2026.11.21-6` · Checked: 2026-11-20 (setup) · Owner: Hans5849
 
 Agents re-check these each coordinator run where they can, and mark anything they cannot verify **Unknown**. Spending, purchases or limit changes are PM review items; agents never buy capacity or skip required tests for lack of it.
 
 | Limit | Allowance | Current usage | Remaining | Source | Checked | Alert threshold | Response |
 |---|---|---|---|---|---|---|---|
-| GitHub Actions minutes (hosted Linux, arm64, macOS) | Unknown (public repository: standard runners normally free; confirm) | Unknown | Unknown | Owner billing settings (not readable by agents) | 2026-11-20 | Any billing warning | Ask owner; reduce matrix reruns |
+| GitHub Actions minutes (hosted Linux x86_64 and arm64; Windows and macOS removed by PR #82) | Unknown (public repository: standard runners normally free; confirm) | Unknown | Unknown | Owner billing settings (not readable by agents) | 2026-11-20 | Any billing warning | Ask owner; reduce matrix reruns |
 | Actions concurrency / queue | Unknown | Unknown | Unknown | Account plan | 2026-11-20 | Queue > 1 h | Deduplicate runs; one full matrix per head |
 | Actions artifact storage and retention | Unknown | Unknown | Unknown | Repository settings | 2026-11-20 | Storage warning | Shorten retention via owner |
 | Self-hosted RK3588 runner (#28) | 1 board, owner-gated | Not provisioned / Unknown | n/a | #28 | 2026-11-20 | Offline | Hardware work BLOCKED; continue hosted work |
@@ -31,6 +31,15 @@ Agents re-check these each coordinator run where they can, and mark anything the
 | PM review time | About 30 min per 16-hour cycle | |
 
 **Thresholds.** Exhaustion never silently lowers model depth or test coverage. On a stop threshold, A holds new orders and escalates on #74.
+
+## Measured CI baseline
+
+Full push run before PR #82 ([run 44812839215](https://github.com/Hans5849/HyperHDR/actions/runs/44812839215)): 23 jobs and 98.8 runner-minutes (macOS 16.8, Windows 6.6, Linux matrix 53.3, CodeQL 15.2, sanitizers 5.9).
+
+Estimated after PR #82:
+- code change: 7 jobs, about 26 minutes;
+- documentation-only change: 2 jobs, about 1 minute;
+- release tag: 9 jobs, about 31 minutes.
 
 ## Current usage
 

@@ -1,6 +1,6 @@
 {
   "schema": "hyperhdr.test-registry/1",
-  "policy_revision": "AP-2026.11.21-5",
+  "policy_revision": "AP-2026.11.21-6",
   "tests": [
     {
       "id": "T-V4L2",
@@ -226,30 +226,30 @@
     },
     {
       "id": "T-PKG-LINUX",
-      "purpose": "Package build, Debian metadata and CLI smoke on installed package",
+      "purpose": "Debian 13 package build, Debian metadata check and install plus CLI smoke test on the installed package",
       "requirement": "#27",
-      "command": "Linux job in .github/workflows/push-pull.yml (tests/packaging/check-deb.sh, tests/cli/hyperhdr-cli-smoke.sh)",
-      "environment": "hosted CI, debian bullseye/bookworm/trixie/forky x amd64/armhf/arm64, ubuntu noble/resolute, fedora 44, archlinux",
-      "prerequisites": "docker build images",
+      "command": "Linux job in .github/workflows/push-pull.yml (build.sh, tests/packaging/check-deb.sh, tests/cli/hyperhdr-cli-smoke.sh)",
+      "environment": "hosted CI: Debian 13 (trixie) arm64 on every code change; Debian 13 amd64 added for tags (release validation)",
+      "prerequisites": "docker build images ghcr.io/awawa-dev/{arm64,amd64}/debian:trixie",
       "expected": "package builds, metadata check and smoke pass",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "high (full matrix)",
+      "cost": "medium (one package build; two for releases)",
       "security_ids": [
         "S-PKG-01"
       ]
     },
     {
-      "id": "T-PKG-MACOS",
-      "purpose": "macOS build",
-      "requirement": "portability",
-      "command": "macOS job in .github/workflows/push-pull.yml",
-      "environment": "hosted macOS",
-      "prerequisites": "brew deps",
-      "expected": "build succeeds",
-      "gate": "merge",
+      "id": "T-PKG-COMPAT",
+      "purpose": "Optional Linux distribution compatibility packages (Debian 11-14 amd64/armhf/arm64 except the Debian 13 pair, Ubuntu noble/resolute, Fedora 44, Arch)",
+      "requirement": "compatibility (optional)",
+      "command": "Manual workflow_dispatch of push-pull.yml with compat_matrix=true",
+      "environment": "hosted CI, 14 builds",
+      "prerequisites": "docker build images",
+      "expected": "packages build",
+      "gate": "optional",
       "owner": "Hans5849",
-      "cost": "high (macOS minutes)"
+      "cost": "high (14 builds)"
     },
     {
       "id": "T-BOARD-HIL",
@@ -274,6 +274,33 @@
       "gate": "release",
       "owner": "Hans5849 (operator)",
       "cost": "operator time"
+    },
+    {
+      "id": "T-CI-SCOPE",
+      "purpose": "CI scope: no Windows/macOS runners or signing in any workflow; no dangling needs; release gates; required suites on x86_64 and arm64 with ASan/UBSan; cancellation rules; no pull_request_target; board workflow dispatch-only",
+      "requirement": "Linux-only CI (owner 2026-11-21); #18",
+      "command": "python3 tests/ci/ci-platform-scope-test.py",
+      "environment": "hosted CI RepositoryPolicy job (introduced by PR #82; active once merged)",
+      "prerequisites": "python3, python3-yaml",
+      "expected": "exit 0; PASS lines only",
+      "gate": "merge",
+      "owner": "Hans5849",
+      "cost": "low",
+      "security_ids": [
+        "S-CI-01"
+      ]
+    },
+    {
+      "id": "T-CI-CLASSIFY",
+      "purpose": "Dependency-based CI change selection: decision table, git end-to-end, documentation-dependency audit",
+      "requirement": "CI efficiency (owner 2026-11-21)",
+      "command": "python3 tests/ci/classify-changes-test.py",
+      "environment": "hosted CI RepositoryPolicy job (introduced by PR #82; active once merged)",
+      "prerequisites": "python3, git",
+      "expected": "exit 0; PASS lines only",
+      "gate": "merge",
+      "owner": "Hans5849",
+      "cost": "low"
     }
   ]
 }

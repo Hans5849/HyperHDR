@@ -1,6 +1,6 @@
 # Agent workflow: cadence, work, review, release and shutdown
 
-Policy revision: `AP-2026.11.21-5` · Standard: consolidated edition 1.0 · Authority: [AGENT_POLICY.md](AGENT_POLICY.md) · Adapter: [AGENT_ADAPTER.md](AGENT_ADAPTER.md) · PM Control: issue #74 · Operations log: issue #75
+Policy revision: `AP-2026.11.21-6` · Standard: consolidated edition 1.0 · Authority: [AGENT_POLICY.md](AGENT_POLICY.md) · Adapter: [AGENT_ADAPTER.md](AGENT_ADAPTER.md) · PM Control: issue #74 · Operations log: issue #75
 
 The primary measure is **accepted criterion weight against an approved baseline**. A closed issue, a merged PR, a successful scheduler run or a clean scan does not by itself establish acceptance.
 

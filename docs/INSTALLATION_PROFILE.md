@@ -1,6 +1,6 @@
 # Installation profile
 
-Policy revision: `AP-2026.11.21-5` · Profile revision: `IP-2` · Accountable owner: Hans5849 · Last verified: 2026-11-20 (from repository docs and code only; **not** re-observed on the target)
+Policy revision: `AP-2026.11.21-6` · Profile revision: `IP-3` · Accountable owner: Hans5849 · Last verified: 2026-11-21 (from repository docs and code only; **not** re-observed on the target). `IP-3` changes only P3 (hosted CI, Linux-only scope); P1, P2 and P4 are unchanged from `IP-2`
 
 ## Repository security profile (standard page 18)
 
@@ -59,9 +59,10 @@ Sources: `docs/rk3588-development-results.md`, `docs/rk3588-hardware-validation.
 
 ## P3: Hosted CI (GitHub Actions)
 
-- Platforms: `ubuntu-26.04` and `ubuntu-26.04-arm`, macOS, and Docker build images (Debian, Ubuntu, Fedora, Arch).
+- **Intended:** Linux only. `ubuntu-26.04` and `ubuntu-26.04-arm` runners, and Docker build images for Debian 13 (trixie) arm64 and amd64. The optional compatibility images (Debian, Ubuntu, Fedora, Arch) run by manual dispatch only.
+- **Observed (2026-11-21):** `master` still runs the macOS and Windows jobs and the 16-entry Linux matrix until PR #82 merges. Windows and macOS are outside this fork's supported scope (`docs/ci-scope.md`).
 - Actions are pinned by version tag (`actions/checkout@v7.0.1`), **not by commit SHA**.
-- Default `GITHUB_TOKEN` permissions in `push-pull.yml` are **Unknown**: no explicit `permissions:` block (SF-003).
+- Default `GITHUB_TOKEN` permissions in `push-pull.yml`: **intended** `contents: read` at workflow level (PR #82). **Observed** on `master`: no explicit block, so the repository default applies, which is Unknown (SF-003).
 - Fork PRs run CI through the `pull_request` event.
 
 ## P4: Development and agent sessions

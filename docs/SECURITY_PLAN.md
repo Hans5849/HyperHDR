@@ -1,6 +1,6 @@
 # Security plan
 
-Policy revision: `AP-2026.11.21-5` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-2` · Owner: Hans5849 · Reviewer role: F (security reviewer)
+Policy revision: `AP-2026.11.21-6` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-3` · Owner: Hans5849 · Reviewer role: F (security reviewer)
 
 F reviews code and its intended environment throughout planning, development, integration and installation readiness, alongside D's correctness review. **Neither D nor F grants merge or release authority**, and F cannot waive a gate.
 
@@ -38,9 +38,9 @@ Trust boundaries:
 | Security ID | Registry tests | What it covers |
 |---|---|---|
 | S-MEM-01 | T-V4L2, T-BGR24, T-COLOR-REF, T-DECODER, T-LED-OUTPUT, T-CLI (all ASan/UBSan) | Memory safety of capture, decode, LED output and the CLI parser |
-| S-CI-01 | T-BOARD-POLICY | Board workflow trust policy and runner preflight (no root, no passwordless sudo) |
+| S-CI-01 | T-BOARD-POLICY, T-CI-SCOPE | Board workflow trust policy and runner preflight (no root, no passwordless sudo) |
 | S-RED-01 | T-EVIDENCE, T-DOCTOR | Redaction and read-only behaviour of the evidence and diagnostics tools |
-| S-PKG-01 | T-DEB-VERSION, T-PKG-LINUX | Package metadata and layout |
+| S-PKG-01 | T-DEB-VERSION, T-PKG-LINUX | Package metadata and layout (Debian 13 arm64; amd64 at release) |
 
 **Gaps with no automated check yet (planned):**
 - Secret scanning of diffs.
@@ -98,7 +98,7 @@ Each finding records the following fields:
 |---|---|---|---|---|---|
 | SF-001 | Default `localApiAuth=false`: any LAN client can use the JSON API without authentication | P1 | Medium (Unknown LAN trust; raise to high if the LAN is untrusted) | Open: needs profile questions 2 and 3 answered | Hans5849 |
 | SF-002 | `hyperhdr@.service` has no systemd hardening directives | P1 | Medium | Open: a proposal needs authorization | Hans5849 |
-| SF-003 | `push-pull.yml` has no explicit `permissions:`; actions are pinned by tag, not SHA | P3 | Low | Open | Hans5849 |
+| SF-003 | `push-pull.yml` has no explicit `permissions:`; actions are pinned by tag, not SHA | P3 | Low | Open; partly addressed by PR #82 (workflow default `contents: read`, Windows SignPath secrets no longer used). Tag pinning remains | Hans5849 |
 | SF-004 | `.deb` install has no documented integrity check (checksum or signature) | P1 | Medium | Open | Hans5849 |
 | SF-005 | Decoder out-of-bounds and unaligned reads | P1 | High | In progress: #61 / PR #64, #68 / PR #73 | Hans5849 |
 | SF-006 | Inherited upstream workflow `upload-to-github-pages.yml` runs on tag pushes in this fork and targets upstream's Pages repository (a fork-profile mismatch; the secret is absent here) | P3 | Low | Open | Hans5849 |

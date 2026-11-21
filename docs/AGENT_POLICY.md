@@ -1,6 +1,6 @@
 # Agent policy: authority and approval boundaries
 
-Policy revision: `AP-2026.11.21-5` · Governing standard: *AI assisted repository development standard, consolidated edition 1.0* (20 November 2026). Source documents S1–S3 are history only, not separate instructions.
+Policy revision: `AP-2026.11.21-6` · Governing standard: *AI assisted repository development standard, consolidated edition 1.0* (20 November 2026). Source documents S1–S3 are history only, not separate instructions.
 Owner amendments in force: **16-hour cadence** (2026-11-20, low priority) · repository security profile **public fork** (2026-11-20).
 Entrypoints: [AGENTS.md](../AGENTS.md), [CLAUDE.md](../CLAUDE.md). Workflow: [AGENT_WORKFLOW.md](AGENT_WORKFLOW.md). Adapter: [AGENT_ADAPTER.md](AGENT_ADAPTER.md). PM Control: issue #74. Operations log: issue #75.
 
@@ -87,6 +87,7 @@ These apply under every tier, profile and delegation.
   - `rk3588-board.yml` is manual dispatch only and runs only trusted `master` code, through `rk3588-hil`. Agents never dispatch it.
   - Never add a `pull_request` or `pull_request_target` trigger to it, and never route PR code onto the board.
 - **Memory safety first:** never trade decoder memory safety for performance (#61, #64, #68, #71).
+- **Platform scope:** Linux only (owner, 2026-11-21). Windows and macOS are outside this fork's supported scope. Never claim they build or pass tests, and never add their CI without owner authorization (`docs/ci-scope.md` after PR #82).
 - **Release scope:** R1 does not depend on GPU, RGA, NPU, DMA-BUF zero-copy or vector-decoder performance work (#12–#17 are deferred), unless a measured defect blocks the CPU release.
 - **Secrets and privacy:**
   - No secrets, tokens, private network identifiers or captured HDMI content in commits, comments, artifacts, logs, prompts or PRs.
