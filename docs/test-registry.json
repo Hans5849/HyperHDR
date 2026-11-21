@@ -1,6 +1,6 @@
 {
   "schema": "hyperhdr.test-registry/1",
-  "policy_revision": "AP-2026.11.21-6",
+  "policy_revision": "AP-2026.11.21-7",
   "tests": [
     {
       "id": "T-V4L2",
@@ -277,10 +277,10 @@
     },
     {
       "id": "T-CI-SCOPE",
-      "purpose": "CI scope: no Windows/macOS runners or signing in any workflow; no dangling needs; release gates; required suites on x86_64 and arm64 with ASan/UBSan; cancellation rules; no pull_request_target; board workflow dispatch-only",
+      "purpose": "CI scope: no Windows/macOS runners or signing in any workflow; no dangling needs; release gates; required suites on x86_64 and arm64 with ASan/UBSan; cancellation rules; no pull_request_target; board workflow dispatch-only; no automatic multi-distribution matrix or ungated upstream publishing in any workflow (upstream-sync safeguard); fork guard and scope documentation present",
       "requirement": "Linux-only CI (owner 2026-11-21); #18",
       "command": "python3 tests/ci/ci-platform-scope-test.py",
-      "environment": "hosted CI RepositoryPolicy job (introduced by PR #82; active once merged)",
+      "environment": "hosted CI: Fork CI guard workflow (fork-guard.yml, every push/PR, never path-skipped) and the RepositoryPolicy release gate (introduced by PR #82; active once merged)",
       "prerequisites": "python3, python3-yaml",
       "expected": "exit 0; PASS lines only",
       "gate": "merge",
@@ -295,7 +295,7 @@
       "purpose": "Dependency-based CI change selection: decision table, git end-to-end, documentation-dependency audit",
       "requirement": "CI efficiency (owner 2026-11-21)",
       "command": "python3 tests/ci/classify-changes-test.py",
-      "environment": "hosted CI RepositoryPolicy job (introduced by PR #82; active once merged)",
+      "environment": "hosted CI: Fork CI guard workflow (fork-guard.yml, every push/PR, never path-skipped) and the RepositoryPolicy release gate (introduced by PR #82; active once merged)",
       "prerequisites": "python3, git",
       "expected": "exit 0; PASS lines only",
       "gate": "merge",

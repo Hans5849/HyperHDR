@@ -1,6 +1,6 @@
 # Provider adapter record: Claude Code cloud
 
-Policy revision: `AP-2026.11.21-6` · Adapter revision: `ADP-1` · Owner: Hans5849 · Verified: 2026-11-20 to 2026-11-21, by the setup session (`session_01EsaroCaQRu7aWfttihA7tB`), from tool responses and readbacks
+Policy revision: `AP-2026.11.21-7` · Adapter revision: `ADP-1` · Owner: Hans5849 · Verified: 2026-11-20 to 2026-11-21, by the setup session (`session_01EsaroCaQRu7aWfttihA7tB`), from tool responses and readbacks
 
 Edition 1.0 §15 requires every provider capability to be mapped to an operation the tools **actually expose**, with evidence. Legacy names from the playbook are examples, not guaranteed commands. This record covers the one provider in use. No OpenAI or Codex adapter is configured.
 

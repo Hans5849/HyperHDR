@@ -1,6 +1,6 @@
 # Resource limits
 
-Policy revision: `AP-2026.11.21-6` · Checked: 2026-11-20 (setup) · Owner: Hans5849
+Policy revision: `AP-2026.11.21-7` · Checked: 2026-11-20 (setup) · Owner: Hans5849
 
 Agents re-check these each coordinator run where they can, and mark anything they cannot verify **Unknown**. Spending, purchases or limit changes are PM review items; agents never buy capacity or skip required tests for lack of it.
 
@@ -40,6 +40,8 @@ Estimated after PR #82:
 - code change: 7 jobs, about 26 minutes;
 - documentation-only change: 2 jobs, about 1 minute;
 - release tag: 9 jobs, about 31 minutes.
+
+**Billing assumptions.** This is a public repository, so standard GitHub-hosted runners are free. On a private repository, GitHub bills Linux at 1×, Windows at 2× and macOS at 10× per minute; the removed macOS jobs (16.8 min) and Windows job (6.6 min) would have cost the most there. Linux arm64 standard runners are free for public repositories. The account's actual plan and limits are Unknown to agents (owner to confirm).
 
 ## Current usage
 

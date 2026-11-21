@@ -1,6 +1,6 @@
 # CLAUDE.md: HyperHDR agent entrypoint
 
-Policy revision: `AP-2026.11.21-6`
+Policy revision: `AP-2026.11.21-7`
 Companion entrypoint: [AGENTS.md](AGENTS.md). The two files must stay equivalent in authority, safety gates, test commands and handoff rules.
 PM Control (canonical dashboard): issue #74, https://github.com/Hans5849/HyperHDR/issues/74
 Operations log and sprint coordination (CLAIM / RELEASE / work orders / run events; never approvals): https://github.com/Hans5849/HyperHDR/issues/75 (Sprint 1, ends 2026-12-12 23:59 America/New_York; shutdown 23:14)

@@ -1,8 +1,17 @@
 # Project plan
 
-Policy revision: `AP-2026.11.21-6` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
+Policy revision: `AP-2026.11.21-7` · PM Control: issue #74 · Priority: **low** (16-hour coordination cycle).
 
 ## Charter
+
+**Fork objectives** (owner, 2026-11-20 and 2026-11-21; issue #81; `docs/fork-scope.md` after PR #82):
+1. The Orange Pi 5 Plus (RK3588) with Armbian Debian 13 arm64 is the primary supported deployment and release target.
+2. Linux x86-64 stays supported for development, automated regression testing and CI.
+3. Windows and macOS are outside this fork's supported development, testing and release scope.
+4. Other Linux distributions are not routine release targets; compatibility testing only on manual request.
+5. Windows and macOS source and build-system support remain intact, so support can be restored.
+6. All RK3588-relevant functional, sanitizer, security, regression and release-acceptance testing remains mandatory.
+
 
 Deliver the smallest stable, measurable release of **Orange Pi 5 Plus (RK3588) native HDMI input → HyperHDR CPU processing → DDP → ESP32/WLED LEDs**, optimizing for verified end-to-end behaviour and preserving every proven colour, latency, reliability and security property. Parent roadmap: #7.
 
@@ -62,6 +71,15 @@ Each acceptance criterion counts once under one component. Weights are proposed 
 | C7 Decoder memory safety | #61, #64, #68, #71 | Vectorised decoder bounds fixed and merged with sanitizer tests (#61/#64); remaining unaligned reads fixed (#68); performance tradeoff documented (#71) | 3 |
 | C8 Delivery hygiene | #18 | Release documentation and CI evidence current for the release candidate | 1 |
 | **Total** | | | **18** |
+
+**Release requirements (CI).** The tag's exact SHA must pass:
+- `RepositoryPolicy`;
+- `CaptureTests` on x86_64 and arm64 (ASan/UBSan);
+- CodeQL;
+- the Debian 13 arm64 and amd64 packages, with the install and CLI smoke test;
+- `Fork CI guard`.
+
+These are the `publish` gates of PR #82. Windows and macOS jobs are not release requirements. Hosted CI never replaces hardware acceptance (`docs/rk3588-acceptance-run.md`).
 
 Release stop condition: every criterion has evidence on the **same pinned candidate SHA**, with rollback proven, and the owner gives GO.
 

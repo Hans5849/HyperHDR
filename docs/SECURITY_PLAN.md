@@ -1,6 +1,6 @@
 # Security plan
 
-Policy revision: `AP-2026.11.21-6` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-3` · Owner: Hans5849 · Reviewer role: F (security reviewer)
+Policy revision: `AP-2026.11.21-7` · Installation profile: [INSTALLATION_PROFILE.md](INSTALLATION_PROFILE.md) `IP-3` · Owner: Hans5849 · Reviewer role: F (security reviewer)
 
 F reviews code and its intended environment throughout planning, development, integration and installation readiness, alongside D's correctness review. **Neither D nor F grants merge or release authority**, and F cannot waive a gate.
 
