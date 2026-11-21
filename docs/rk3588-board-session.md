@@ -18,7 +18,7 @@ issue's own acceptance criteria first (last table).
 
 | Requirement | Status | How it's enforced |
 |---|---|---|
-| Routine CI is GitHub-hosted | Yes. Every workflow except `rk3588-board.yml` runs on hosted Ubuntu, macOS and Windows runners. The hardware-free suites run on hosted x86_64 **and native ARM64** | `tests/ci/board-workflow-policy-test.py` fails if any other workflow targets a self-hosted runner |
+| Routine CI is GitHub-hosted | Yes. Every workflow except `rk3588-board.yml` runs on hosted Ubuntu runners. This fork is Linux-only: the Windows and macOS CI jobs were removed on 2026-11-21 ([ci-scope.md](ci-scope.md)). The hardware-free suites run on hosted x86_64 **and native ARM64** | `tests/ci/board-workflow-policy-test.py` fails if any other workflow targets a self-hosted runner |
 | Board workflow is manual only | `workflow_dispatch` only; `master` of `Hans5849/HyperHDR` only; token `contents: read` | same policy test |
 | Environment and hardware labels required | `environment: rk3588-hil`; labels `self-hosted, Linux, ARM64, rk3588, orange-pi-5-plus, hyperhdr-hil`; the preflight refuses other boards, root and passwordless sudo | same policy test. **Whether `rk3588-hil` has required reviewers is a repository setting: confirm it in Settings → Environments** (#28) |
 | New tests where expected | Colour references (#41), benchmark reporting (#40), recovery (#43) and the LED output counters (#45, once merged) run in hosted CI on both architectures. The board runs only the suites that need native timing or hardware context, as decided in #28 (2026-11-15): the board isn't general CI | policy test: every board suite also runs hosted |
