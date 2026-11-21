@@ -1,0 +1,40 @@
+# Fork CI guard (Hans5849/HyperHDR only; upstream has no file of this name).
+#
+# Upstream synchronization can overwrite push-pull.yml and silently bring back
+# the Windows/macOS jobs or the full distribution matrix. This workflow lives in
+# its own file so a sync cannot remove it, and it runs the CI-scope and change-
+# selection tests on every push and pull request, including documentation-only
+# changes (it is never skipped by path). See docs/fork-scope.md.
+name: Fork CI guard
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: fork-guard-${{ (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && github.run_id || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Fork CI guard
+    runs-on: ubuntu-26.04
+    # Same-repository PRs are covered by the push run on the same head SHA.
+    if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 python3-yaml
+
+      - name: CI scope (Linux only, release gates, no reintroduced matrices)
+        run: python3 tests/ci/ci-platform-scope-test.py
+
+      - name: Change selection (dependency-based, fail safe)
+        run: python3 tests/ci/classify-changes-test.py

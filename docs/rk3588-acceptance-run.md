@@ -20,6 +20,8 @@ Set once per session: `svc_user=ryan` (the service user), and the receiver node
 with the command at the top of the checklist (`RX=...`). Record everything in one
 folder, `run=~/acceptance-$(date +%Y%m%d)`, and attach it to the issues in step 10.
 
+**CI prerequisites.** Before this run, the candidate SHA must pass the release gates in [fork-scope.md](fork-scope.md#release-requirements): repository policy, the x86_64 and arm64 sanitizer suites, CodeQL, and the Debian 13 packages. Hosted CI does not replace any step below.
+
 ## 1. Record what is under test 🖥
 
 `hyperhdr --version` (commit), `dpkg-query -W hyperhdr`, `uname -r`,

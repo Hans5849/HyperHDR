@@ -1,8 +1,33 @@
 name: HyperHDR CI Build
 
+# Linux-only CI for this fork (owner decision 2026-11-21). Windows and macOS are
+# outside the supported scope of Hans5849/HyperHDR: their CI jobs were removed,
+# but their application source and build-system support (build.sh, cmake/) are
+# kept so another platform can be reinstated by adding a job back.
+# Routine runs: repository policy (always), and for code changes the sanitizer
+# suites on x86_64 and arm64, CodeQL and the Debian 13 arm64 and amd64 packages.
+# master and tags always run everything. Optional distribution compatibility
+# builds: run this workflow manually with compat_matrix.
 on:
   push:
-  pull_request:  
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      compat_matrix:
+        description: "Also build the optional Linux compatibility packages (Debian 11-14 amd64/armhf/arm64, Ubuntu, Fedora, Arch)"
+        type: boolean
+        default: false
+
+# One run per development branch/PR; a newer push cancels a superseded run.
+# Tags (release validation) and master get a unique group per run, so neither a
+# running nor a pending run is ever cancelled or replaced.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && github.run_id || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/master' }}
+
+# Read-only by default; jobs that need more ask for it.
+permissions:
+  contents: read
 
 env:
     USE_CACHE: ${{ fromJSON(vars.USE_CACHE || 'false') }}
@@ -12,13 +37,68 @@ env:
 jobs:
 
 ######################
+## Change selection ##
+######################
+
+  changes:
+    name: Select CI work
+    runs-on: ubuntu-26.04
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      linux_matrix: ${{ steps.classify.outputs.linux_matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Classify the change (dependency-based; fails safe to running everything)
+        id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          COMPAT: ${{ inputs.compat_matrix && 'true' || 'false' }}
+        run: python3 scripts/ci/classify-changes.py --github-output "$GITHUB_OUTPUT"
+
+######################
+## Repository policy #
+######################
+
+  RepositoryPolicy:
+    name: Repository policy checks
+    runs-on: ubuntu-26.04
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 python3-yaml
+
+      - name: Policy tests (run for every change, including documentation-only)
+        run: |
+          python3 tests/ci/classify-changes-test.py
+          python3 tests/ci/ci-platform-scope-test.py
+          python3 tests/ci/board-workflow-policy-test.py
+          python3 tests/ci/cache-cleaner-policy-test.py
+          if [ -f tests/ci/agent-entrypoints-test.py ]; then
+            python3 tests/ci/agent-entrypoints-test.py
+          else
+            echo "tests/ci/agent-entrypoints-test.py not present on this ref (agent policy not merged yet)"
+          fi
+
+######################
 ## Capture tests #####
 ######################
 
   CaptureTests:
     name: V4L2 capture and BGR24 decoder tests (ASan/UBSan, ${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -150,32 +230,28 @@ jobs:
   Linux:
     name: ${{ matrix.architecture }}/${{ matrix.distroName}}:${{ matrix.distroVersion }}
     runs-on: ${{ startsWith(matrix.architecture, 'arm') && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    permissions:
+      contents: read
+      actions: write    # "Clear branch ccache storage" deletes this branch's caches
     env:
       platform: ${{ startsWith(matrix.architecture, 'arm') && 'rpi' || 'linux' }}
-    strategy:      
+    strategy:
+      fail-fast: false
+      # Routine and tags: Debian 13 arm64 (the RK3588 target) and amd64 (x86-64 smoke).
+      # The full distribution matrix runs only on manual dispatch with
+      # compat_matrix (scripts/ci/classify-changes.py).
       matrix:
-        distroName: [debian]
-        distroVersion: [bullseye, bookworm, trixie, forky]
-        architecture: [amd64, armhf, arm64]        
-        include:
-          - distroName: ubuntu
-            distroVersion: noble
-            architecture: amd64
-          - distroName: ubuntu
-            distroVersion: resolute
-            architecture: amd64
-          - distroName: fedora
-            distroVersion: 44
-            architecture: amd64
-          - distroName: archlinux
-            distroVersion: latest
-            architecture: amd64
+        include: ${{ fromJSON(needs.changes.outputs.linux_matrix) }}
 
     steps:   
       - uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          # The job token has actions: write for the cache cleanup step only;
+          # don't leave it in .git/config where build scripts could read it.
+          persist-credentials: false
 
       - name: Download ccache files
         if: env.USE_CACHE == 'true'
@@ -205,17 +281,21 @@ jobs:
       - name: Check Debian package metadata
         if: matrix.distroName == 'debian' || matrix.distroName == 'ubuntu'
         shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           DEB=$(find deploy -maxdepth 1 -type f -name "Hyper*.deb" | head -n 1)
           test -n "$DEB" || { echo "no .deb produced"; exit 1; }
-          bash tests/packaging/check-deb.sh "$DEB" --version-file version --arch ${{ matrix.architecture }}
+          bash tests/packaging/check-deb.sh "$DEB" --version-file version --arch "$ARCHITECTURE"
 
       - name: Install package and run command-line checks
         if: matrix.distroName == 'debian' && matrix.distroVersion == 'trixie' && (matrix.architecture == 'amd64' || matrix.architecture == 'arm64')
         shell: bash
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
         run: |
           docker run --rm -v "$PWD:/w:ro" --entrypoint /bin/bash \
-            ghcr.io/awawa-dev/${{ matrix.architecture }}/debian:trixie -c '
+            "ghcr.io/awawa-dev/$ARCHITECTURE/debian:trixie" -c '
               set -e
               apt-get update -qq
               DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /w/deploy/Hyper*.deb
@@ -228,9 +308,12 @@ jobs:
         if: startsWith(github.event.ref, 'refs/tags') == false
         continue-on-error: true
         run: |
-          gh cache list --ref "${{ github.ref }}" --key "${{ matrix.architecture }}-${{ matrix.distroName }}-${{ matrix.distroVersion }}-ccache-" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
+          gh cache list --ref "$CACHE_REF" --key "$CACHE_KEY" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CACHE_REF: ${{ github.ref }}
+          CACHE_KEY: ${{ matrix.architecture }}-${{ matrix.distroName }}-${{ matrix.distroVersion }}-ccache-
 
       - name: Upload artifacts (release)
         if: startsWith(github.event.ref, 'refs/tags') && github.event_name != 'pull_request'
@@ -238,6 +321,7 @@ jobs:
         with:
           name: release-artifact-${{ matrix.architecture }}-${{ matrix.distroName }}-${{ matrix.distroVersion }}
           path: deploy/Hyper*
+          retention-days: 14
 
       - name: Find artifact file
         id: find_artifact
@@ -252,256 +336,7 @@ jobs:
         with:
           path: ${{ steps.find_artifact.outputs.installer_artifact_path }}
           archive: false
-
-######################
-######## macOS #######
-######################
-
-  macOS:
-    name: ${{ matrix.JOB_NAME }}
-    runs-on: ${{ matrix.JOB_RUNNER }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
-    strategy:
-      matrix:
-        include:        
-          - JOB_RUNNER: macos-15
-            JOB_NAME: "macOS 15 (arm64: M1/M2/M3/M4)"
-            NICE_NAME: arm64
-          - JOB_RUNNER: macos-15-intel
-            JOB_NAME: macOS 15 (x64)
-            NICE_NAME: x64
-    steps:
-      # Checkout
-      - uses: actions/checkout@v7.0.1
-        with:
-            submodules: true
-
-      - name: Download ccache files
-        if: env.USE_CACHE == 'true'
-        uses: actions/cache@v6.1.0
-        with:
-            path: build/.ccache
-            key: macOS-${{ matrix.NICE_NAME }}-ccache-${{ github.run_id }}
-            restore-keys: macOS-${{ matrix.NICE_NAME }}-ccache
-
-      # Install deps
-      - name: Install deps
-        shell: bash
-        run: brew install -q qtbase qtserialport ccache zstd webp jpeg-turbo flatbuffers pkg-config || true
-            
-      - name: Build packages
-        env:
-            PLATFORM: osx
-            USE_CCACHE: ${{ env.USE_CACHE }}
-            RESET_CACHE: ${{ env.RESET_CACHE }}
-            JOB_RUNNER: ${{ matrix.JOB_RUNNER }}
-        shell: bash
-        run: ./build.sh || ./build.sh
-
-      - name: Clear branch ccache storage
-        continue-on-error: true
-        run: |
-          gh cache list --ref "${{ github.ref }}" --key "macOS-${{ matrix.NICE_NAME }}-ccache" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Upload artifacts (release)
-        if: startsWith(github.event.ref, 'refs/tags') && github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v7.0.2
-        with:
-            name: release-artifact-${{ matrix.JOB_RUNNER }}      
-            path: build/Hyper*.dmg
-
-      - name: Find artifact file
-        id: find_artifact
-        if: startsWith(github.event.ref, 'refs/tags') == false
-        run: |
-          ARTIFACT_FILE=$(ls -S build/Hyper*.dmg 2>/dev/null | head -n 1)
-          echo "installer_artifact_path=$ARTIFACT_FILE" >> $GITHUB_OUTPUT
-
-      - name: Upload artifacts from commit
-        if: startsWith(github.event.ref, 'refs/tags') == false && steps.find_artifact.outputs.installer_artifact_path != ''
-        uses: actions/upload-artifact@v7.0.2
-        with:
-            path: ${{ steps.find_artifact.outputs.installer_artifact_path }}
-            archive: false
-
-######################
-###### Windows #######
-######################
-
-  windows:
-    name: Windows
-    runs-on: ${{ matrix.os }}
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
-    strategy:
-      matrix:
-        os: [windows-2022]
-    env:
-      MSVC: 2022
-      QT_VERSION: 6.8.3
-      TOOLKIT_DIR: "${{ github.workspace }}\\Toolkit"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7.0.1
-        with:
-          submodules: true
-
-      - name: Cache Toolkit
-        uses: actions/cache@v6.1.0
-        id: cache-toolkit-windows
-        with:
-          path: ${{ env.TOOLKIT_DIR }}
-          key: ${{ matrix.os }}-Toolkit-Qt.${{ env.QT_VERSION }}-NSIS-TurboJPEG
-
-      - name: Python 3.13 for aqtinstall
-        if: steps.cache-toolkit-windows.outputs.cache-hit != 'true'
-        uses: actions/setup-python@v7      
-        with:
-          python-version: '3.13'
-
-      - name: "Install Toolkit: Qt, TurboJPEG and NSIS"
-        if: steps.cache-toolkit-windows.outputs.cache-hit != 'true'
-        shell: powershell
-        run: |          
-          Invoke-WebRequest -Method Get -Uri https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.3/libjpeg-turbo-3.0.3-vc64.exe -OutFile turbojpeg.exe -UseBasicParsing
-          Start-Process -Wait turbojpeg.exe -ArgumentList "/S","/D=$env:TOOLKIT_DIR\libjpeg-turbo64"
-          Invoke-WebRequest -UserAgent "Wget" -Uri "https://prdownloads.sourceforge.net/nsis/nsis-3.11-setup.exe" -OutFile nsis.exe
-          Start-Process -Wait nsis.exe -ArgumentList "/S","/D=$env:TOOLKIT_DIR\nsis"
-          New-Item -ItemType Directory -Force -Path "$env:TOOLKIT_DIR\ccache" | Out-Null
-          Invoke-WebRequest -Method Get -Uri https://github.com/ccache/ccache/releases/download/v4.14/ccache-4.14-windows-x86_64.zip -OutFile "$env:TOOLKIT_DIR\ccache\ccache.zip" -UseBasicParsing
-          pip install aqtinstall
-          aqt install-qt -O "$env:TOOLKIT_DIR\Qt" windows desktop $env:QT_VERSION "win64_msvc${env:MSVC}_64" -m qtserialport
-
-      - name: "Restore Toolkit"
-        shell: cmd
-        run: |
-          7z e "%TOOLKIT_DIR%\ccache\ccache.zip" -o.\build *.exe -r
-          echo %TOOLKIT_DIR%\nsis>> %GITHUB_PATH%
-
-      - name: Download ccache files
-        if: env.USE_CACHE == 'true'
-        uses: actions/cache@v6.1.0
-        with:
-            path: build/.ccache
-            key: ${{ runner.os }}-ccache-${{ github.run_id }}
-            restore-keys: ${{ runner.os }}-ccache
-          
-      - name: Build packages        
-        env:
-          PLATFORM: windows
-          VCINSTALLDIR: 'C:/Program Files/Microsoft Visual Studio/${{ env.MSVC }}/Enterprise/VC'
-          CMAKE_PREFIX_PATH: "${{ env.TOOLKIT_DIR }}\\Qt\\${{ env.QT_VERSION }}\\msvc${{ env.MSVC }}_64\\lib\\cmake\\"
-          USE_CCACHE: ${{ env.USE_CACHE }}
-        shell: bash
-        run: |
-          "${{env.VCINSTALLDIR}}/Auxiliary/Build/vcvars64.bat"
-          ./build.sh
-
-      - name: Clear branch ccache storage
-        continue-on-error: true
-        run: |
-          gh cache list --ref "${{ github.ref }}" --key "${{ runner.os }}-ccache" --limit 100 --json id --jq '.[].id' | xargs -r -n1 gh cache delete
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Upload unsigned artifacts
-        if:  github.event_name != 'pull_request' && fromJSON(vars.USE_SIGNPATH || 'false')
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: unsigned-windows-installer
-          path: build/Hyper*.exe
-          retention-days: 1
-
-      - name: Find artifact file
-        id: find_artifact
-        if: startsWith(github.event.ref, 'refs/tags') == false && fromJSON(vars.USE_SIGNPATH || 'false') == false
-        shell: bash
-        run: |
-          ARTIFACT_FILE=$(ls -S build/Hyper*.exe 2>/dev/null | head -n 1)
-          echo "installer_artifact_path=$ARTIFACT_FILE" >> $GITHUB_OUTPUT
-
-      - name: Upload artifacts from commit
-        if: startsWith(github.event.ref, 'refs/tags') == false && steps.find_artifact.outputs.installer_artifact_path != ''
-        uses: actions/upload-artifact@v7.0.2
-        with:
-            path: ${{ steps.find_artifact.outputs.installer_artifact_path }}
-            archive: false          
-
-################################
-###### Sign Windows ############
-################################
-
-  sign-windows:
-    name: Sign Windows Installer
-    needs: [windows]
-    runs-on: ubuntu-26.04
-    if:  github.event_name != 'pull_request' && fromJSON(vars.USE_SIGNPATH || 'false')
-    steps:
-      - name: Download unsigned artifact
-        uses: actions/download-artifact@v8.0.2
-        with:
-          name: unsigned-windows-installer
-          path: to_sign
-
-      - name: Check SignPath Secrets
-        env:
-          SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
-          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-        run: |
-          if [ -z "$SIGNPATH_TOKEN" ] || [ -z "$SIGNPATH_ORGANIZATION_ID" ]; then
-            echo "SignPath secrets not found."
-            exit 1
-          fi
-
-      - name: Upload unsigned ZIP to GitHub (SignPath V2 requirement)
-        id: upload-unsigned-artifact
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: signpath_upload
-          path: to_sign/
-          retention-days: 1
-
-      - name: Sign artifact with SignPath
-        id: signpath_step
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: 'hyperhdr'
-          signing-policy-slug: ${{ startsWith(github.ref, 'refs/tags/') && 'release-signing' || 'test-signing' }}
-          github-artifact-id: ${{ steps.upload-unsigned-artifact.outputs.artifact-id }}
-          wait-for-completion: true
-          output-artifact-directory: signed_artifact
-
-      - name: Check SignPath result & fail if needed
-        if: always()
-        run: |
-          if [ "${{ steps.signpath_step.outcome }}" != "success" ]; then
-            echo "::error::SignPath action failed technically (check logs for timeout/network issues)."
-            exit 1
-          fi
-          
-          if [ ! -d "signed_artifact" ] || [ -z "$(ls -A signed_artifact 2>/dev/null)" ]; then
-            echo "::error::SignPath reported success, but NO signed artifacts were downloaded!"
-            echo "This usually means the signing request was REJECTED or failed silently."
-            exit 1
-          fi          
-          echo "Signing successful. Artifacts found in 'signed_artifact'."
-          
-      - name: Upload artifacts (release)
-        if: startsWith(github.event.ref, 'refs/tags')
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: release-artifact-windows
-          path: signed_artifact/Hyper*.exe
-          
-      - name: Upload artifacts from commit
-        if: startsWith(github.event.ref, 'refs/tags') == false
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: Windows_x64_setup_signed
-          path: signed_artifact/Hyper*.exe
+          retention-days: 7
 
 ################################
 ####### CodeQL support #########
@@ -510,7 +345,8 @@ jobs:
   analyze:
     name: Analyze (CodeQL)
     runs-on: ubuntu-26.04
-    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository) && fromJSON(vars.USE_CODEQL || 'true')
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && fromJSON(vars.USE_CODEQL || 'true')
 
     permissions:
       actions: read
@@ -527,6 +363,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Run composite CodeQL job for '${{matrix.language}}' language
         uses: ./.github/actions/codeql
@@ -551,6 +388,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           submodules: true
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
@@ -609,14 +447,17 @@ jobs:
   publish:
     name: Publish Releases
     if: startsWith(github.event.ref, 'refs/tags') && github.event_name != 'pull_request'
-    # Capture/decoder/CLI suites are a release gate, not only a build signal.
-    needs: [CaptureTests, Linux, sign-windows, macOS]
+    # Release gate: policy, sanitizer suites (x86_64 and arm64), CodeQL and the
+    # Debian 13 packages. Windows and macOS are outside this fork's scope.
+    needs: [RepositoryPolicy, CaptureTests, Linux, analyze]
     runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Generate environment variables from version and tag
         run: |
