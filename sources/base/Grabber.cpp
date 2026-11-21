@@ -31,6 +31,7 @@
 #endif
 
 #include <base/Grabber.h>
+#include <cstring>
 #include <utils/GlobalSignals.h>
 
 const QString Grabber::AUTO_SETTING = QString("auto");
@@ -931,7 +932,11 @@ QJsonObject Grabber::getJsonInfo()
 		for (int i = 0; i < 256; i += 2)
 			for (int j = 32; j <= 160; j += 64)
 			{
-				checkSum ^= *(reinterpret_cast<uint32_t*>(&(_lut.data()[LUT_INDEX(j, i, (255 - i))])));
+				// LUT_INDEX is a multiple of 3, so this load is unaligned: copy it
+				// instead of dereferencing a uint32_t* (#68). Same value as before.
+				uint32_t word;
+				std::memcpy(&word, &(_lut.data()[LUT_INDEX(j, i, (255 - i))]), sizeof(word));
+				checkSum ^= word;
 			}
 		grabbers["lutFastCRC"] = "0x" + QString("%1").arg(checkSum, 4, 16).toUpper();
 	}

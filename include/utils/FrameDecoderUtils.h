@@ -24,8 +24,10 @@
 *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 *  SOFTWARE.
 */
+#pragma once
 
-
+#include <array>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <cmath>
