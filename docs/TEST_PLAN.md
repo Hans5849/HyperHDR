@@ -6,7 +6,7 @@ Policy revision: `AP-2026.11.21-7` · Registry: [test-registry.json](test-regist
 
 | Gate | Tests | Where |
 |---|---|---|
-| **Merge** (every PR, exact head SHA) | T-V4L2, T-BGR24, T-COLOR-REF, T-DECODER, T-BENCH-REPORT, T-LED-OUTPUT, T-CLI, T-COLOR-PATTERNS, T-OPTICAL-LATENCY, T-DEB-VERSION, T-BOARD-ARTIFACT, T-STATS-ALIGN, T-EVIDENCE, T-DOCTOR, T-BOARD-POLICY, T-AGENT-ENTRYPOINTS, T-CI-SCOPE, T-CI-CLASSIFY, T-PKG-LINUX (Debian 13 arm64) | Hosted CI (`.github/workflows/push-pull.yml`), x86_64 and arm64, ASan/UBSan. Documentation-only changes run only the repository-policy tests (T-AGENT-ENTRYPOINTS, T-CI-SCOPE, T-CI-CLASSIFY, T-BOARD-POLICY); see `docs/fork-scope.md` |
+| **Merge** (every PR, exact head SHA) | T-V4L2, T-BGR24, T-COLOR-REF, T-DECODER, T-BENCH-REPORT, T-LED-OUTPUT, T-CLI, T-COLOR-PATTERNS, T-OPTICAL-LATENCY, T-DEB-VERSION, T-BOARD-ARTIFACT, T-STATS-ALIGN, T-EVIDENCE, T-DOCTOR, T-BOARD-POLICY, T-AGENT-ENTRYPOINTS, T-CI-SCOPE, T-CI-CLASSIFY, T-PKG-LINUX (Debian 13 arm64 and amd64) | Hosted CI (`.github/workflows/push-pull.yml`), x86_64 and arm64, ASan/UBSan. Documentation-only changes run only the repository-policy tests (T-AGENT-ENTRYPOINTS, T-CI-SCOPE, T-CI-CLASSIFY, T-BOARD-POLICY); see `docs/fork-scope.md` |
 | **Optional** (manual dispatch) | T-PKG-COMPAT | Hosted CI, `compat_matrix=true` |
 | **Release** (one pinned candidate SHA) | All merge-gate tests on the final `master` commit, plus T-BOARD-HIL and T-ACCEPT-RK3588 | Hosted CI, the Orange Pi 5 Plus via `rk3588-hil`, and the operator |
 

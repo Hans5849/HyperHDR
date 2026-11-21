@@ -229,12 +229,12 @@
       "purpose": "Debian 13 package build, Debian metadata check and install plus CLI smoke test on the installed package",
       "requirement": "#27",
       "command": "Linux job in .github/workflows/push-pull.yml (build.sh, tests/packaging/check-deb.sh, tests/cli/hyperhdr-cli-smoke.sh)",
-      "environment": "hosted CI: Debian 13 (trixie) arm64 on every code change; Debian 13 amd64 added for tags (release validation)",
+      "environment": "hosted CI: Debian 13 (trixie) arm64 (primary) and amd64 (x86-64 build/smoke) on every code change, master push and tag",
       "prerequisites": "docker build images ghcr.io/awawa-dev/{arm64,amd64}/debian:trixie",
       "expected": "package builds, metadata check and smoke pass",
       "gate": "merge",
       "owner": "Hans5849",
-      "cost": "medium (one package build; two for releases)",
+      "cost": "medium (two package builds)",
       "security_ids": [
         "S-PKG-01"
       ]
