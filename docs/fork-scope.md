@@ -19,8 +19,8 @@ Applies to `Hans5849/HyperHDR`, a public development fork of [awawa-dev/HyperHDR
 | `RepositoryPolicy`: CI-scope, change-selection, board-workflow, cache-cleaner and agent-policy tests | yes | yes | yes | yes |
 | `CaptureTests`: x86_64 **and** arm64, ASan/UBSan. Covers V4L2 capture, BGR24, colour reference, decoder regression, benchmark reporting, LED/DDP, CLI, colour patterns, optical latency, Debian version mapping, board artifact, statistics alignment, evidence collector (redaction), diagnostics, board preflight and workflow policy | yes | skipped | yes | yes |
 | `analyze`: CodeQL for cpp and javascript | yes | skipped | yes | yes |
-| `Linux`: Debian 13 **arm64** `.deb`, metadata check, and install plus CLI smoke test | yes | skipped | yes | yes |
-| `Linux`: Debian 13 **amd64** `.deb` | — | — | yes | yes |
+| `Linux`: Debian 13 **arm64** `.deb` (primary), metadata check, and install plus CLI smoke test | yes | skipped | yes | yes |
+| `Linux`: Debian 13 **amd64** `.deb` (x86-64 build and smoke check), metadata check, and install plus CLI smoke test | yes | skipped | yes | yes |
 | `Linux`: optional compatibility packages, 14 of them (Debian 11–14 amd64/armhf/arm64, Ubuntu noble/resolute, Fedora 44, Arch) | — | — | — | only with `compat_matrix` |
 | `publish`: draft release | — | — | needs `RepositoryPolicy`, `CaptureTests`, `Linux`, `analyze` | — |
 
@@ -28,12 +28,14 @@ Applies to `Hans5849/HyperHDR`, a public development fork of [awawa-dev/HyperHDR
 - `README.md` is the package description, so it counts as code.
 - `docs/color-patterns/**` and `docs/rk3588-benchmark-reporting.md` are test inputs, so they count as code.
 - `tests/ci/classify-changes-test.py` audits every documentation file against the build, package, test and workflow files.
-- Unknown cases, tags, manual runs and force pushes run everything.
+- A branch push is classified by the **whole** difference between the branch and `master`, not just its newest commit. So a docs-only commit pushed on top of an untested code commit still runs the code tests.
+- `master`, tags, manual runs, a missing `origin/master` and any git error always run everything.
 
 **Duplicates and cancellation.**
 - A same-repository PR doesn't rerun CI; checks are reported on the head SHA by the push run.
 - Fork PRs run on `pull_request`, without secrets and never on self-hosted runners.
-- A newer push cancels a superseded development run. **Tag runs and `master` runs are never cancelled.**
+- A newer push cancels a superseded development run.
+- Tags and `master` get a unique concurrency group for each run, so **neither a running nor a pending tag or `master` run is ever cancelled or replaced**.
 
 **Caching and retention.**
 - ccache is opt-in (`vars.USE_CACHE`, default off). The package jobs delete their branch caches after each run, so a cross-run cache would need a cleanup-policy change first. Evaluated and left unchanged.

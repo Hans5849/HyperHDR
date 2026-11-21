@@ -98,8 +98,9 @@ spec.loader.exec_module(cc)
 release = cc.linux_matrix("push", "refs/tags/x", False)
 check({"distroName": "debian", "distroVersion": "trixie", "architecture": "arm64"} in release,
       "release validation builds the Debian 13 arm64 package")
-check(cc.linux_matrix("push", "refs/heads/x", False) == cc.ROUTINE and len(cc.ROUTINE) == 1,
-      "routine pushes build one package (Debian 13 arm64), not the full distribution matrix")
+check(cc.linux_matrix("push", "refs/heads/x", False) == cc.ROUTINE
+      and {(m["distroVersion"], m["architecture"]) for m in cc.ROUTINE} == {("trixie", "arm64"), ("trixie", "amd64")},
+      "routine pushes build the Debian 13 arm64 and amd64 packages only, not the full distribution matrix")
 lin = jobs.get("Linux", {"strategy": {"matrix": {}}, "steps": []})
 check(lin["strategy"]["matrix"].get("include") == "${{ fromJSON(needs.changes.outputs.linux_matrix) }}",
       "the Linux matrix comes from the change classifier")
@@ -110,6 +111,10 @@ check(bool(smoke) and "trixie" in str(smoke[0].get("if", "")), "the Debian 13 in
 conc = ci.get("concurrency", {})
 cancel = str(conc.get("cancel-in-progress", ""))
 check("refs/tags/" in cancel and "refs/heads/master" in cancel, "superseded runs cancel, but never tags or master")
+group = str(conc.get("group", ""))
+check("github.run_id" in group, "tags and master get a unique concurrency group, so even a pending run is never replaced")
+gconc = (workflows.get("fork-guard.yml") or {}).get("concurrency", {})
+check("github.run_id" in str(gconc.get("group", "")), "fork guard: tags and master never share a concurrency group")
 check(ci.get("permissions") == {"contents": "read"}, "workflow token defaults to contents: read")
 check("workflow_dispatch" in ci["on"] and "compat_matrix" in ci["on"]["workflow_dispatch"]["inputs"],
       "optional compatibility matrix is available by manual dispatch")

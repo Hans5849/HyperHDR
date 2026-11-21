@@ -12,12 +12,13 @@ The decision is dependency-based, not extension-based:
   (tests/ci/color-patterns-test.py, tests/ci/bench-validate-test.py), so they are code.
 - Policy documents read only by the repository-policy tests are not "code": the
   RepositoryPolicy job runs on every event regardless of this output.
-Anything unknown, any git error, tags, workflow_dispatch and an empty diff all
-yield code=true (fail safe: run everything).
+Anything unknown, any git error, tags, master, workflow_dispatch and an empty
+diff all yield code=true (fail safe: run everything). Branch pushes are classified
+by their whole difference from master, not by the newest commit alone.
 
   classify-changes.py [--github-output FILE] [--paths-from FILE]
 Event context comes from environment variables set by the workflow:
-  EVENT, REF, BEFORE, AFTER, COMPAT ("true" adds the optional compatibility matrix)
+  EVENT, REF, AFTER, COMPAT (BEFORE is accepted but unused) ("true" adds the optional compatibility matrix)
 """
 import re
 import json
@@ -41,8 +42,11 @@ CONSUMED = [
     "README.md",                            # CPACK_PACKAGE_DESCRIPTION_FILE
 ]
 
-ROUTINE = [{"distroName": "debian", "distroVersion": "trixie", "architecture": "arm64"}]
-RELEASE = ROUTINE + [{"distroName": "debian", "distroVersion": "trixie", "architecture": "amd64"}]
+# Debian 13 arm64 is the primary package; Debian 13 amd64 is the x86-64
+# build/smoke check requested in issue #81 (review RR-001, M1).
+ROUTINE = [{"distroName": "debian", "distroVersion": "trixie", "architecture": "arm64"},
+           {"distroName": "debian", "distroVersion": "trixie", "architecture": "amd64"}]
+RELEASE = ROUTINE
 COMPAT = [{"distroName": "debian", "distroVersion": v, "architecture": a}
           for v in ("bullseye", "bookworm", "trixie", "forky")
           for a in ("amd64", "armhf", "arm64")
@@ -92,10 +96,10 @@ def changed_paths(event, before, after):
             # actions/checkout checks out the merge commit; parent 1 is the base.
             return _git("diff", "--name-only", "HEAD^1", "HEAD").split("\n")
         if event == "push":
-            if before and set(before) != {"0"}:
-                _git("cat-file", "-e", before + "^{commit}")
-                return _git("diff", "--name-only", before, after).split("\n")
-            base = _git("merge-base", "origin/master", after).strip()   # new branch
+            # Classify the branch's whole change against master, never just the
+            # newest commit: a docs-only push on top of an untested (cancelled or
+            # failed) code push must still run the code tests (review RR-001, B1).
+            base = _git("merge-base", "origin/master", after).strip()
             return _git("diff", "--name-only", base, after).split("\n")
     except (subprocess.CalledProcessError, OSError):
         return None
@@ -118,8 +122,9 @@ def main(argv):
     compat = os.environ.get("COMPAT", "") == "true"
     if paths_file:
         paths = open(paths_file).read().split("\n")
-    elif ref.startswith("refs/tags/") or event not in ("push", "pull_request"):
-        paths = None                      # releases and manual runs: everything
+    elif (ref.startswith("refs/tags/") or ref == "refs/heads/master"
+          or event not in ("push", "pull_request")):
+        paths = None                      # releases, master and manual runs: everything
     else:
         paths = changed_paths(event, os.environ.get("BEFORE", ""), os.environ.get("AFTER", "HEAD"))
     code = True if paths is None else needs_code(paths)

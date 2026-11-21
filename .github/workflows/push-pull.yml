@@ -5,9 +5,9 @@ name: HyperHDR CI Build
 # but their application source and build-system support (build.sh, cmake/) are
 # kept so another platform can be reinstated by adding a job back.
 # Routine runs: repository policy (always), and for code changes the sanitizer
-# suites on x86_64 and arm64, CodeQL and the Debian 13 arm64 package.
-# Tags (releases): the same plus Debian 13 amd64. Optional distribution
-# compatibility builds: run this workflow manually with compat_matrix.
+# suites on x86_64 and arm64, CodeQL and the Debian 13 arm64 and amd64 packages.
+# master and tags always run everything. Optional distribution compatibility
+# builds: run this workflow manually with compat_matrix.
 on:
   push:
   pull_request:
@@ -18,10 +18,11 @@ on:
         type: boolean
         default: false
 
-# One run per branch/PR; a newer push cancels a superseded development run.
-# Release validation (tags) and master are never cancelled.
+# One run per development branch/PR; a newer push cancels a superseded run.
+# Tags (release validation) and master get a unique group per run, so neither a
+# running nor a pending run is ever cancelled or replaced.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master') && github.run_id || github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/master' }}
 
 # Read-only by default; jobs that need more ask for it.
@@ -238,7 +239,7 @@ jobs:
       platform: ${{ startsWith(matrix.architecture, 'arm') && 'rpi' || 'linux' }}
     strategy:
       fail-fast: false
-      # Routine: Debian 13 arm64 (the RK3588 target). Tags add Debian 13 amd64.
+      # Routine and tags: Debian 13 arm64 (the RK3588 target) and amd64 (x86-64 smoke).
       # The full distribution matrix runs only on manual dispatch with
       # compat_matrix (scripts/ci/classify-changes.py).
       matrix:

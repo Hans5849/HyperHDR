@@ -44,15 +44,15 @@ check(cc.needs_code(["docs/sub/dir/file.md"]), "nested docs paths are not assume
 
 # --- matrices -------------------------------------------------------------------------
 routine = cc.linux_matrix("push", "refs/heads/feature", False)
-check(routine == [{"distroName": "debian", "distroVersion": "trixie", "architecture": "arm64"}],
-      "routine package build: Debian 13 arm64 only")
+check([(m["distroVersion"], m["architecture"]) for m in routine] == [("trixie", "arm64"), ("trixie", "amd64")],
+      "routine package builds: Debian 13 arm64 (primary) and amd64 (x86-64 smoke)")
 release = cc.linux_matrix("push", "refs/tags/21.0.0.0", False)
 check({(m["distroVersion"], m["architecture"]) for m in release} == {("trixie", "arm64"), ("trixie", "amd64")},
       "release: Debian 13 arm64 and amd64")
 compat = cc.linux_matrix("workflow_dispatch", "refs/heads/master", True)
 keys = [(m["distroName"], m["distroVersion"], m["architecture"]) for m in compat]
 check(len(keys) == len(set(keys)), "compatibility matrix has no duplicate entries")
-check(len(compat) == 2 + 14, "manual compatibility run: release pair plus 14 optional builds")
+check(len(compat) == 2 + 14, "manual compatibility run: the Debian 13 pair plus 14 optional builds")
 check(cc.linux_matrix("pull_request", "refs/pull/1/merge", True) == routine, "compat input ignored outside workflow_dispatch")
 
 # --- end to end through git and the CLI ---------------------------------------------
@@ -69,12 +69,23 @@ with tempfile.TemporaryDirectory() as d:
     g("add", "-A"); g("commit", "-qm", "base"); base = g("rev-parse", "HEAD")
     pathlib.Path(d, "docs/a.md").write_text("b\n"); g("commit", "-qam", "docs"); docs = g("rev-parse", "HEAD")
     pathlib.Path(d, "x.cpp").write_text("y\n"); g("commit", "-qam", "code"); code = g("rev-parse", "HEAD")
+    g("update-ref", "refs/remotes/origin/master", base)        # master is at "base"
     rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/f", "BEFORE": base, "AFTER": docs, "_CWD": d})
-    check(rc == 0 and o.get("code") == "false", "push of a docs-only commit: code=false")
+    check(rc == 0 and o.get("code") == "false", "branch whose whole change is docs-only: code=false")
     rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/f", "BEFORE": docs, "AFTER": code, "_CWD": d})
     check(o.get("code") == "true", "push of a source commit: code=true")
+    # Regression for review RR-001 B1: code commit, then a docs-only commit pushed
+    # separately (the code run may have been cancelled). The new head is untested.
+    pathlib.Path(d, "docs/a.md").write_text("c\n"); g("commit", "-qam", "docs again"); docs2 = g("rev-parse", "HEAD")
+    rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/f", "BEFORE": code, "AFTER": docs2, "_CWD": d})
+    check(o.get("code") == "true", "docs-only push on top of an untested code push still runs the code tests")
     rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/f", "BEFORE": "deadbeef" * 5, "AFTER": code, "_CWD": d})
-    check(o.get("code") == "true", "unknown 'before' commit (force push): fail safe code=true")
+    check(o.get("code") == "true", "unknown 'before' commit (force push): code=true")
+    rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/master", "BEFORE": base, "AFTER": docs, "_CWD": d})
+    check(o.get("code") == "true", "master always runs everything, even for a docs-only push")
+    g("update-ref", "-d", "refs/remotes/origin/master")
+    rc, o = run_cli({"EVENT": "push", "REF": "refs/heads/f", "BEFORE": base, "AFTER": docs, "_CWD": d})
+    check(o.get("code") == "true", "no origin/master to compare with: fail safe code=true")
     rc, o = run_cli({"EVENT": "push", "REF": "refs/tags/1.0", "BEFORE": docs, "AFTER": code, "_CWD": d})
     check(o.get("code") == "true" and len(json.loads(o["linux_matrix"])) == 2, "tag: everything, release matrix")
     rc, o = run_cli({"EVENT": "workflow_dispatch", "REF": "refs/heads/master", "COMPAT": "true", "_CWD": d})
